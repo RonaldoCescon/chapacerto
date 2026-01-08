@@ -9,7 +9,7 @@ import {
   Star, Loader2, Copy, X, ShieldCheck, User, Lock, 
   Calendar, UserCircle, Search, List, History, 
   Package, Box, Armchair, Filter, AlertTriangle, Trash2, Clock, 
-  Wallet, TrendingUp, Zap, MessageSquare, MapPin
+  Wallet, TrendingUp, Zap, MessageSquare, MapPin, Edit3
 } from 'lucide-react';
 import ChatModal from '@/components/ChatModal';
 import jsPDF from 'jspdf';
@@ -20,7 +20,7 @@ interface Order {
   created_at: string; status: string; updated_at: string;
   scheduled_date?: string; scheduled_time?: string; 
   agreed_price?: number; 
-  client: { nome_razao: string; id: string; telefone?: string }; 
+  client: { nome_razao: string; id: string; telefone?: string; cpf?: string }; 
   client_rating?: number;
   cargo_type?: string; 
   clean_description?: string;
@@ -76,9 +76,10 @@ export default function DriverFeed() {
   const [currentPaymentProposal, setCurrentPaymentProposal] = useState<MyProposal | null>(null);
   const [ratingTarget, setRatingTarget] = useState<{name: string, id: string, orderId: string} | null>(null);
   
-  // FORMULÁRIO
+  // FORMULÁRIO 
   const [price, setPrice] = useState('');
   const [message, setMessage] = useState('');
+  const [editingProposalId, setEditingProposalId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [stars, setStars] = useState(5);
 
@@ -140,21 +141,20 @@ export default function DriverFeed() {
     return () => clearInterval(interval);
   }, [showPaymentModal, paymentStep, pixData, currentPaymentProposal, currentUser]);
 
-  // --- REALTIME OTIMIZADO ---
+  // --- REALTIME TOTAL (MOTORISTA) ---
   useEffect(() => {
     if (!currentUser?.id) return;
     
-    // Canal único para o motorista
-    const channel = supabase.channel(`driver_updates_${currentUser.id}`)
-      // Aceites de propostas (Proposals)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'proposals', filter: `driver_id=eq.${currentUser.id}` }, (payload) => {
+    const channel = supabase.channel(`driver_realtime_${currentUser.id}`)
+      // 1. Escuta TUDO sobre propostas (Aceita, Rejeitada, Nova mensagem)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'proposals', filter: `driver_id=eq.${currentUser.id}` }, (payload) => {
          loadMyProposals(currentUser.id);
-         if ((payload.new as any).is_accepted === true) {
+         if (payload.eventType === 'UPDATE' && (payload.new as any).is_accepted === true) {
             playSound();
             toast.success('Sua proposta foi ACEITA! 🚀', { icon: <CheckCircle className="text-green-500" /> });
          }
       })
-      // Mensagens
+      // 2. Escuta Novas Mensagens
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, async (payload) => {
          if (payload.new.sender_id !== currentUser.id) {
              const { data: proposal } = await supabase.from('proposals').select('driver_id').eq('id', payload.new.proposal_id).single();
@@ -164,18 +164,19 @@ export default function DriverFeed() {
              }
          }
       })
-      // Novas vagas (Orders) - Sem filtro complexo para garantir recebimento
+      // 3. Escuta TUDO sobre pedidos (Novo, Cancelado, Atualizado)
+      // Nota: Sem filtro de ID para pegar novos pedidos globais
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
          if (payload.eventType === 'INSERT' && (payload.new as any).status === 'open') {
             playSound();
             toast.info('Nova Vaga Disponível!', { icon: <Zap className="text-yellow-500"/> });
          }
-         // Atualiza listas pois o status de uma ordem ativa pode ter mudado (ex: cliente pagou)
+         // Atualiza listas para remover pedidos pegos ou cancelados
          fetchOrders(currentUser.id);
          loadMyProposals(currentUser.id);
       })
       .subscribe((status) => {
-         if (status === 'SUBSCRIBED') console.log('🟢 Realtime Chapa Ativo');
+         if (status === 'SUBSCRIBED') console.log('✅ Conexão Realtime Motorista Ativa');
       });
 
     return () => { supabase.removeChannel(channel); };
@@ -205,7 +206,7 @@ export default function DriverFeed() {
   const loadMyProposals = async (userIdOverride?: string) => {
     const uid = userIdOverride || currentUser?.id;
     if (!uid) return;
-    const { data: proposals } = await supabase.from('proposals').select('*, order:order_id(*, client:profiles(nome_razao, id, telefone))').eq('driver_id', uid).order('created_at', { ascending: false });
+    const { data: proposals } = await supabase.from('proposals').select('*, order:order_id(*, client:profiles(nome_razao, id, telefone, cpf))').eq('driver_id', uid).order('created_at', { ascending: false });
     if (proposals) {
       const enhanced = await Promise.all(proposals.map(async (p: any) => {
         const { count } = await supabase.from('messages').select('*', { count: 'exact', head: true }).eq('proposal_id', p.id).eq('is_read', false).neq('sender_id', uid);
@@ -218,36 +219,80 @@ export default function DriverFeed() {
     }
   };
 
+  // Abre modal para NOVA proposta (com verificação)
   const openProposal = (order: Order) => {
+      // Verifica se já existe proposta
+      const existing = myProposals.find(p => p.order.id === order.id);
+      
+      if (existing) {
+          toast.info("Você já enviou uma proposta. Abrindo para edição.");
+          openEditProposal(existing);
+          return;
+      }
+
       setSelectedOrder(order);
+      setEditingProposalId(null);
       setPrice(order.agreed_price ? order.agreed_price.toString() : '');
       setMessage('');
       setShowProposalModal(true);
   };
 
+  const openEditProposal = (prop: MyProposal) => {
+      setSelectedOrder(prop.order);
+      setEditingProposalId(prop.id);
+      setPrice(prop.amount.toString());
+      setMessage(prop.message);
+      setShowProposalModal(true);
+  };
+
   const sendProposal = async (e: React.FormEvent) => {
       e.preventDefault(); setSending(true);
-      await supabase.from('proposals').insert({
+      
+      const payload = {
           order_id: selectedOrder?.id,
           driver_id: currentUser.id,
           amount: parseFloat(price),
           message: message
-      });
-      toast.success('Proposta enviada! Chat liberado.');
+      };
+
+      if (editingProposalId) {
+          await supabase.from('proposals').update(payload).eq('id', editingProposalId);
+          toast.success('Proposta atualizada!');
+      } else {
+          await supabase.from('proposals').insert(payload);
+          toast.success('Proposta enviada!');
+      }
+
       setShowProposalModal(false);
       loadMyProposals(currentUser.id);
       setActiveTab('active');
       setSending(false);
   };
 
+  const handleDeleteProposal = async (proposalId: string) => {
+      if(!confirm('Tem certeza que deseja cancelar esta oferta?')) return;
+      await supabase.from('proposals').delete().eq('id', proposalId);
+      toast.success('Oferta cancelada.');
+      loadMyProposals(currentUser.id);
+  };
+
+  const handleReport = async (targetId: string, orderId: string) => {
+    const reason = prompt("Qual o motivo da denúncia?");
+    if (!reason) return;
+    const { error } = await supabase.from('reports').insert({
+        accuser_id: currentUser.id,
+        accused_id: targetId,
+        order_id: orderId,
+        reason: reason
+    });
+    if(!error) toast.success("Denúncia enviada.");
+  };
+
   const handleFinish = async (orderId: string) => {
       if(!confirm('O serviço foi realmente finalizado? O cliente será notificado.')) return;
       
       try {
-          const { error } = await supabase
-            .from('orders')
-            .update({ status: 'completed', updated_at: new Date().toISOString() })
-            .eq('id', orderId);
+          const { error } = await supabase.rpc('finish_order', { p_order_id: orderId });
             
           if (error) throw error;
           
@@ -256,7 +301,7 @@ export default function DriverFeed() {
           setActiveTab('review');
       } catch (err: any) {
           console.error("Erro ao finalizar:", err);
-          toast.error("Não foi possível finalizar. Verifique sua conexão.");
+          toast.error("Não foi possível finalizar.");
       }
   };
 
@@ -273,33 +318,48 @@ export default function DriverFeed() {
     const toastId = toast.loading('Baixando recibo...');
     try {
         const { data: driverData } = await supabase.from('profiles').select('cpf').eq('id', currentUser.id).single();
+        const myName = (profileName || 'PRESTADOR').toUpperCase();
+        const myCpf = driverData?.cpf || '***.***.***-**';
+
+        const clientName = prop.order.client.nome_razao.toUpperCase();
+        const clientCpf = (prop.order.client as any).cpf || '***.***.***-**';
+
         const doc = new jsPDF();
         
-        doc.setFontSize(22); doc.text("RECIBO DE PRESTAÇÃO", 105, 20, { align: "center" });
+        doc.setFontSize(18);
+        doc.text("RECIBO DE PRESTAÇÃO DE SERVIÇO", 105, 20, { align: "center" });
         doc.setLineWidth(0.5); doc.line(20, 25, 190, 25);
         
-        doc.setFontSize(14);
+        doc.setFontSize(10);
         doc.text("PRESTADOR (EU):", 20, 40);
-        doc.setFontSize(12);
-        doc.text((profileName || 'PRESTADOR').toUpperCase(), 20, 48);
-        doc.text(`CPF: ${driverData?.cpf || '***'}`, 20, 54);
+        doc.setFontSize(12); doc.setFont("helvetica", "bold");
+        doc.text(myName, 20, 46);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(10);
+        doc.text(`CPF/CNPJ: ${myCpf}`, 20, 52);
         
-        doc.setFontSize(14);
-        doc.text("CLIENTE:", 20, 70);
-        doc.setFontSize(12);
-        doc.text(prop.order.client.nome_razao.toUpperCase(), 20, 78);
+        doc.text("TOMADOR (CLIENTE):", 20, 65);
+        doc.setFontSize(12); doc.setFont("helvetica", "bold");
+        doc.text(clientName, 20, 71);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(10);
+        doc.text(`CPF/CNPJ: ${clientCpf}`, 20, 77);
 
-        doc.setFontSize(14);
-        doc.text("SERVIÇO:", 20, 95);
+        doc.setFontSize(10);
+        doc.text("SERVIÇO:", 20, 90);
         doc.setFontSize(12);
-        doc.text(`${prop.order.clean_description}`, 20, 103);
-        doc.text(`Local: ${prop.order.origin}`, 20, 110);
+        doc.text(`${prop.order.clean_description}`, 20, 96);
+        doc.setFontSize(10);
+        doc.text("LOCAL:", 20, 105);
+        doc.setFontSize(12);
+        doc.text(`${prop.order.origin}`, 20, 111);
         
-        doc.setFontSize(16); doc.setTextColor(0, 100, 0);
-        doc.text(`VALOR RECEBIDO: R$ ${prop.amount.toFixed(2)}`, 190, 135, { align: "right" });
+        doc.setDrawColor(0); doc.setFillColor(240, 240, 240);
+        doc.rect(20, 120, 170, 15, 'F');
+        doc.setFontSize(14); doc.setFont("helvetica", "bold");
+        doc.text(`VALOR TOTAL: R$ ${prop.amount.toFixed(2)}`, 180, 130, { align: "right" });
         
-        doc.setFontSize(10); doc.setTextColor(100);
-        doc.text(`Data: ${new Date().toLocaleDateString()}`, 20, 135);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(100);
+        doc.text(`Data do Serviço: ${new Date().toLocaleDateString()}`, 20, 145);
+        doc.text("Documento gerado eletronicamente pela plataforma ChapaCerto.", 105, 280, { align: "center" });
         
         doc.save(`Recibo_ChapaCerto_${prop.id.slice(0,6)}.pdf`);
         toast.dismiss(toastId);
@@ -453,6 +513,22 @@ export default function DriverFeed() {
                             </button>
                         </div>
 
+                        {/* SEÇÃO PENDENTE (BOTÕES RECUPERADOS) */}
+                        {!prop.is_accepted && (
+                            <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-gray-100">
+                                <button onClick={() => handleDeleteProposal(prop.id)} className="border border-red-200 bg-red-50 text-red-500 font-bold py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-red-100 transition-colors text-xs">
+                                    <Trash2 size={16}/> Cancelar
+                                </button>
+                                <button onClick={() => openEditProposal(prop)} className="bg-gray-900 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-black transition-colors text-xs">
+                                    <Edit3 size={16}/> Editar
+                                </button>
+                                <button onClick={() => handleReport(prop.order.client.id, prop.order.id)} className="col-span-2 text-gray-400 hover:text-red-500 text-[10px] flex items-center justify-center gap-1 mt-2 transition-colors">
+                                    <AlertTriangle size={12}/> Denunciar Problema
+                                </button>
+                            </div>
+                        )}
+
+                        {/* SEÇÃO ACEITO (PAGAMENTO E FINALIZAÇÃO) */}
                         {prop.is_accepted && (
                             <div className="mt-4 pt-4 border-t border-gray-100 space-y-3 animate-in slide-in-from-top-2">
                                 {prop.order.status === 'paid' ? (
@@ -495,7 +571,7 @@ export default function DriverFeed() {
       {showProposalModal && selectedOrder && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-in fade-in backdrop-blur-sm">
               <div className="bg-white w-full max-w-sm p-8 rounded-3xl shadow-2xl animate-in zoom-in-95">
-                  <h3 className="font-bold text-lg mb-1 text-center text-gray-900">Enviar Proposta</h3>
+                  <h3 className="font-bold text-lg mb-1 text-center text-gray-900">{editingProposalId ? 'Editar Proposta' : 'Enviar Proposta'}</h3>
                   <p className="text-xs text-gray-400 mb-6 text-center">Para: {selectedOrder.clean_description}</p>
                   
                   <form onSubmit={sendProposal} className="space-y-6">
@@ -519,7 +595,7 @@ export default function DriverFeed() {
                       
                       <div className="flex gap-3 pt-2">
                           <button type="button" onClick={() => setShowProposalModal(false)} className="flex-1 text-gray-400 font-bold text-sm hover:text-gray-600 transition-colors">Cancelar</button>
-                          <button disabled={sending} className="flex-[2] bg-gray-900 text-white font-bold py-4 rounded-xl shadow-lg flex justify-center active:scale-95 transition-transform hover:bg-black">{sending ? <Loader2 className="animate-spin"/> : 'Enviar Agora'}</button>
+                          <button disabled={sending} className="flex-[2] bg-gray-900 text-white font-bold py-4 rounded-xl shadow-lg flex justify-center active:scale-95 transition-transform hover:bg-black">{sending ? <Loader2 className="animate-spin"/> : (editingProposalId ? 'Salvar' : 'Enviar Agora')}</button>
                       </div>
                   </form>
               </div>
