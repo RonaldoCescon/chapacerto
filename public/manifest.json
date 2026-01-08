@@ -1,0 +1,17 @@
+{
+  "name": "ChapaCerto",
+  "short_name": "ChapaCerto",
+  "description": "Logística rápida e sem burocracia.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#f8fafc",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
