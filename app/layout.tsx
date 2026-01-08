@@ -23,17 +23,15 @@ export default function RootLayout({
   const pathname = usePathname();
 
   useEffect(() => {
-    // --- TRAVA DE SEGURANÇA MASTER ---
-    // Verifica se o usuário logado foi bloqueado pelo Admin
+    // 1. --- TRAVA DE SEGURANÇA MASTER ---
     const checkSecurityStatus = async () => {
-      // Não checa segurança em páginas públicas para não dar loop
       const publicPages = ['/', '/login', '/register'];
       if (publicPages.includes(pathname)) return;
 
       const { data: { user } } = await supabase.auth.getUser();
       
       if (user) {
-        const { data: profile, error } = await supabase
+        const { data: profile } = await supabase
           .from('profiles')
           .select('is_blocked')
           .eq('id', user.id)
@@ -51,6 +49,37 @@ export default function RootLayout({
     };
 
     checkSecurityStatus();
+
+    // 2. --- MANTER TELA ATIVA (WAKE LOCK) ---
+    let wakeLock: any = null;
+
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await (navigator as any).wakeLock.request('screen');
+          console.log('🛡️ Tela Master Ativa');
+        }
+      } catch (err: any) {
+        // Silencioso: Alguns navegadores podem bloquear se a bateria estiver muito baixa
+        console.warn('WakeLock bloqueado ou não suportado');
+      }
+    };
+
+    requestWakeLock();
+
+    // Reativa a tela ligada se o usuário sair do app e voltar
+    const handleVisibilityChange = () => {
+      if (wakeLock !== null && document.visibilityState === 'visible') {
+        requestWakeLock();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (wakeLock) wakeLock.release().then(() => { wakeLock = null; });
+    };
   }, [pathname, router]);
 
   return (
@@ -85,7 +114,11 @@ export default function RootLayout({
           closeButton 
           theme="light" 
           toastOptions={{
-            style: { borderRadius: '1.25rem', border: '1px solid #f1f5f9', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' },
+            style: { 
+              borderRadius: '1.25rem', 
+              border: '1px solid #f1f5f9', 
+              boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' 
+            },
           }}
         />
       </body>
