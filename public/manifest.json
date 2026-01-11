@@ -1,16 +1,23 @@
 {
-  "name": "ChapaCerto",
+  "name": "Chapa Certo",
   "short_name": "ChapaCerto",
-  "description": "Logística rápida e sem burocracia.",
+  "description": "Conectando quem precisa de força com quem quer trabalhar.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#f8fafc",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "orientation": "portrait",
   "icons": [
     {
-      "src": "/icon.svg",
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.png",
       "sizes": "512x512",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ]

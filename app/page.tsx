@@ -6,6 +6,9 @@ import { supabase } from '@/lib/supabase';
 import { Truck, Users, ArrowRight, Loader2, Smartphone, CheckCircle, LogIn } from 'lucide-react';
 import Link from 'next/link';
 
+// --- NOVO: IMPORTAR O COMPONENTE DO BANNER ---
+import InstallBanner from './components/InstallBanner';
+
 export default function Home() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -82,11 +85,10 @@ export default function Home() {
       <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-100/50 rounded-full blur-[100px] pointer-events-none mix-blend-multiply"></div>
       <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-green-100/50 rounded-full blur-[100px] pointer-events-none mix-blend-multiply"></div>
 
-      {/* --- CABEÇALHO SUPERIOR (CORRIGIDO PARA MOBILE) --- */}
-      {/* Alterado: justify-end no mobile (botão vai pra direita) e justify-between no desktop */}
-      <nav className="absolute top-0 left-0 w-full p-6 flex justify-end md:justify-between items-center z-20 animate-in fade-in slide-in-from-top-4 duration-700">
+      {/* --- CABEÇALHO SUPERIOR --- */}
+      <nav className="absolute top-0 left-0 w-full p-6 flex items-center z-20 animate-in fade-in slide-in-from-top-4 duration-700">
         
-        {/* Logo Pequeno (Aparece só no PC) */}
+        {/* Logo Pequeno */}
         <div className="font-bold text-gray-400 text-xs tracking-widest uppercase hidden md:block">
             Plataforma Oficial
         </div>
@@ -94,7 +96,7 @@ export default function Home() {
         {/* Botão Entrar */}
         <Link 
             href="/login" 
-            className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/80 backdrop-blur-sm border border-gray-200 text-gray-700 text-sm font-bold hover:bg-white hover:text-green-600 hover:border-green-200 hover:shadow-md transition-all duration-300"
+            className="ml-auto flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/80 backdrop-blur-sm border border-gray-200 text-gray-700 text-sm font-bold hover:bg-white hover:text-green-600 hover:border-green-200 hover:shadow-md transition-all duration-300"
         >
             <LogIn size={16} />
             Entrar
@@ -177,6 +179,10 @@ export default function Home() {
         </div>
 
       </div>
+
+      {/* --- NOVO: BANNER DE INSTALAÇÃO (FLUTUANTE) --- */}
+      <InstallBanner />
+
     </main>
   )
 }
