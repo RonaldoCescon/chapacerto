@@ -82,14 +82,16 @@ export default function Home() {
       <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-100/50 rounded-full blur-[100px] pointer-events-none mix-blend-multiply"></div>
       <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-green-100/50 rounded-full blur-[100px] pointer-events-none mix-blend-multiply"></div>
 
-      {/* --- NOVO: CABEÇALHO SUPERIOR (LOGIN) --- */}
-      <nav className="absolute top-0 left-0 w-full p-6 flex justify-between items-center z-20 animate-in fade-in slide-in-from-top-4 duration-700">
-        {/* Logo Pequeno (Opcional, ou deixa vazio para focar só no login) */}
+      {/* --- CABEÇALHO SUPERIOR (CORRIGIDO PARA MOBILE) --- */}
+      {/* Alterado: justify-end no mobile (botão vai pra direita) e justify-between no desktop */}
+      <nav className="absolute top-0 left-0 w-full p-6 flex justify-end md:justify-between items-center z-20 animate-in fade-in slide-in-from-top-4 duration-700">
+        
+        {/* Logo Pequeno (Aparece só no PC) */}
         <div className="font-bold text-gray-400 text-xs tracking-widest uppercase hidden md:block">
             Plataforma Oficial
         </div>
 
-        {/* Botão Entrar Discreto */}
+        {/* Botão Entrar */}
         <Link 
             href="/login" 
             className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/80 backdrop-blur-sm border border-gray-200 text-gray-700 text-sm font-bold hover:bg-white hover:text-green-600 hover:border-green-200 hover:shadow-md transition-all duration-300"
@@ -99,27 +101,27 @@ export default function Home() {
         </Link>
       </nav>
 
-      <div className="relative z-10 w-full max-w-5xl flex flex-col items-center mt-10 md:mt-0">
+      <div className="relative z-10 w-full max-w-5xl flex flex-col items-center mt-10 md:mt-0 text-center">
         
         {/* HEADER PRINCIPAL */}
-        <div className="text-center mb-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
+        <div className="flex flex-col items-center mb-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
           
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white border border-gray-200 text-gray-600 text-xs font-bold mb-8 shadow-sm">
             <CheckCircle size={14} className="text-green-600"/> Sem Burocracia • <Smartphone size={14} className="text-blue-600 ml-1"/> App Fácil
           </div>
 
-          <h1 className="text-5xl md:text-7xl font-extrabold mb-6 tracking-tight text-gray-900 drop-shadow-sm">
+          <h1 className="text-5xl md:text-7xl font-extrabold mb-6 tracking-tight text-gray-900 drop-shadow-sm text-center">
             Chapa<span className="text-transparent bg-clip-text bg-gradient-to-r from-green-600 to-emerald-500">Certo</span>
           </h1>
           
-          <p className="text-lg md:text-xl text-gray-500 max-w-xl mx-auto leading-relaxed font-medium">
+          <p className="text-lg md:text-xl text-gray-500 max-w-xl mx-auto leading-relaxed font-medium text-center">
             Conectando quem precisa de força <br className="hidden md:block"/>
             com quem tem disposição para trabalhar.
           </p>
         </div>
 
         {/* CARDS DE AÇÃO */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 w-full max-w-3xl mb-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 w-full max-w-3xl mb-12 text-left">
           
           {/* CARD 1: CONTRATANTE */}
           <Link 
@@ -169,8 +171,7 @@ export default function Home() {
 
         </div>
 
-        {/* RODAPÉ (Pode manter ou remover, já que agora tem no topo) */}
-        {/* Mantivemos como um "fallback" caso o usuário role até o fim sem decidir */}
+        {/* RODAPÉ */}
         <div className="text-gray-400 text-xs font-medium pb-8 opacity-60 hover:opacity-100 transition-opacity">
            © 2026 ChapaCerto. Todos os direitos reservados.
         </div>
