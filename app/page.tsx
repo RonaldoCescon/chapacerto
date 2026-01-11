@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { Truck, Users, ArrowRight, Handshake, Loader2, Smartphone, CheckCircle } from 'lucide-react';
+import { Truck, Users, ArrowRight, Loader2, Smartphone, CheckCircle, LogIn } from 'lucide-react';
 import Link from 'next/link';
 
 export default function Home() {
@@ -15,7 +15,6 @@ export default function Home() {
 
     const checkRedirect = async () => {
       try {
-        // Timeout de segurança: Se a net estiver lenta (comum na estrada), libera a home em 4s
         const timeoutPromise = new Promise((_, reject) => 
           setTimeout(() => reject(new Error('timeout')), 4000)
         );
@@ -37,10 +36,10 @@ export default function Home() {
               } else {
                 router.replace('/dashboard');
               }
-              return true; // Redirecionando
+              return true; 
             }
           }
-          return false; // Não logado
+          return false; 
         };
 
         await Promise.race([sessionPromise(), timeoutPromise]);
@@ -57,7 +56,7 @@ export default function Home() {
     return () => { isMounted = false; };
   }, [router]);
 
-  // TELA DE LOADING (Branca e Limpa)
+  // TELA DE LOADING
   if (loading) {
     return (
       <div className="min-h-screen bg-white flex flex-col items-center justify-center gap-6">
@@ -72,20 +71,37 @@ export default function Home() {
     );
   }
 
-  // --- LANDING PAGE (LIGHT MODE PREMIUM) ---
+  // --- LANDING PAGE ---
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-center p-6 bg-[#F8FAFC] text-gray-900 overflow-hidden font-sans">
       
-      {/* BACKGROUND GRID (Sutil e Técnico) */}
+      {/* BACKGROUND GRID */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#00000008_1px,transparent_1px),linear-gradient(to_bottom,#00000008_1px,transparent_1px)] bg-[size:24px_24px] pointer-events-none"></div>
       
-      {/* Decoração de Fundo (Manchas suaves) */}
+      {/* DECORAÇÃO DE FUNDO */}
       <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-100/50 rounded-full blur-[100px] pointer-events-none mix-blend-multiply"></div>
       <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-green-100/50 rounded-full blur-[100px] pointer-events-none mix-blend-multiply"></div>
 
-      <div className="relative z-10 w-full max-w-5xl flex flex-col items-center">
+      {/* --- NOVO: CABEÇALHO SUPERIOR (LOGIN) --- */}
+      <nav className="absolute top-0 left-0 w-full p-6 flex justify-between items-center z-20 animate-in fade-in slide-in-from-top-4 duration-700">
+        {/* Logo Pequeno (Opcional, ou deixa vazio para focar só no login) */}
+        <div className="font-bold text-gray-400 text-xs tracking-widest uppercase hidden md:block">
+            Plataforma Oficial
+        </div>
+
+        {/* Botão Entrar Discreto */}
+        <Link 
+            href="/login" 
+            className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/80 backdrop-blur-sm border border-gray-200 text-gray-700 text-sm font-bold hover:bg-white hover:text-green-600 hover:border-green-200 hover:shadow-md transition-all duration-300"
+        >
+            <LogIn size={16} />
+            Entrar
+        </Link>
+      </nav>
+
+      <div className="relative z-10 w-full max-w-5xl flex flex-col items-center mt-10 md:mt-0">
         
-        {/* HEADER */}
+        {/* HEADER PRINCIPAL */}
         <div className="text-center mb-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
           
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white border border-gray-200 text-gray-600 text-xs font-bold mb-8 shadow-sm">
@@ -102,10 +118,10 @@ export default function Home() {
           </p>
         </div>
 
-        {/* CARDS DE AÇÃO (Claros e com Sombra Premium) */}
+        {/* CARDS DE AÇÃO */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 w-full max-w-3xl mb-12">
           
-          {/* CARD 1: CONTRATANTE (Azul Profissional) */}
+          {/* CARD 1: CONTRATANTE */}
           <Link 
             href="/register?type=contratante" 
             className="group relative flex flex-col p-8 rounded-3xl bg-white border border-gray-100 shadow-[0_10px_40px_-15px_rgba(0,0,0,0.05)] hover:shadow-[0_20px_40px_-10px_rgba(37,99,235,0.15)] hover:border-blue-200 transition-all duration-300 hover:-translate-y-1"
@@ -128,7 +144,7 @@ export default function Home() {
             </div>
           </Link>
 
-          {/* CARD 2: PRESTADOR (Verde Dinheiro) */}
+          {/* CARD 2: PRESTADOR */}
           <Link 
             href="/register?type=prestador"
             className="group relative flex flex-col p-8 rounded-3xl bg-white border border-gray-100 shadow-[0_10px_40px_-15px_rgba(0,0,0,0.05)] hover:shadow-[0_20px_40px_-10px_rgba(22,163,74,0.15)] hover:border-green-200 transition-all duration-300 hover:-translate-y-1"
@@ -153,12 +169,10 @@ export default function Home() {
 
         </div>
 
-        {/* RODAPÉ */}
-        <div className="text-gray-400 text-sm animate-in fade-in delay-200 pb-8 font-medium">
-          Já tem conta?{' '}
-          <Link href="/login" className="text-gray-900 font-bold hover:text-green-600 transition-colors underline decoration-gray-300 underline-offset-4 hover:decoration-green-500">
-            Fazer Login
-          </Link>
+        {/* RODAPÉ (Pode manter ou remover, já que agora tem no topo) */}
+        {/* Mantivemos como um "fallback" caso o usuário role até o fim sem decidir */}
+        <div className="text-gray-400 text-xs font-medium pb-8 opacity-60 hover:opacity-100 transition-opacity">
+           © 2026 ChapaCerto. Todos os direitos reservados.
         </div>
 
       </div>

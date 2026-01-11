@@ -90,8 +90,12 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <link rel="manifest" href="/manifest.json" />
-        <link rel="icon" href="/icon.svg" />
-        <link rel="apple-touch-icon" href="/icon.svg" />
+        
+        {/* --- AQUI ESTÁ A MUDANÇA PARA O SEU ÍCONE NOVO --- */}
+        <link rel="icon" href="/icon.png" type="image/png" />
+        <link rel="apple-touch-icon" href="/icon.png" />
+        {/* ------------------------------------------------ */}
+        
         <title>ChapaCerto</title>
       </head>
       <body
