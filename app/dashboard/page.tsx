@@ -293,8 +293,7 @@ export default function ClientDashboard() {
                 if (data.status === 'approved') {
                     // Caso 1: Pagamento de Proposta (Vinculado a um Pedido)
                     if (currentProposal) {
-                        await supabase.from('orders').update({ status: 'paid' }).eq('id', currentProposal.order_id);
-                        setPaymentStep('success'); 
+                        await supabase.from('orders').update({ status: 'paid', is_paid_fee: true }).eq('id', currentProposal.order_id);                        setPaymentStep('success'); 
                         playSound(); 
                         toast.success("Pagamento confirmado!");
                         if (currentOrderIdForProposals) handleViewProposals(currentOrderIdForProposals, false);
@@ -588,15 +587,38 @@ export default function ClientDashboard() {
     toast.success('Proposta recusada.');
   };
 
-  const handleAcceptProposalFree = async (proposal: Proposal) => { 
-    if(!confirm(`Aceitar proposta de R$ ${proposal.amount}?`)) return;
+const handleAcceptProposalFree = async (proposal: Proposal) => { 
+    // 1. VERIFICAÇÃO DE SEGURANÇA
+    // Verifica se JÁ existe alguma proposta aceita para este pedido
+    const { data: existing } = await supabase
+        .from('proposals')
+        .select('id')
+        .eq('order_id', proposal.order_id)
+        .eq('is_accepted', true)
+        .single();
+
+    if (existing) {
+        toast.error("Você já contratou um chapa para este serviço! Cancele o anterior se quiser trocar.");
+        return;
+    }
+
+    if(!confirm(`Confirmar contratação por R$ ${proposal.amount}?`)) return;
+
+    // 2. SEGUE O FLUXO NORMAL
     await supabase.from('proposals').update({ is_accepted: true }).eq('id', proposal.id); 
-    await supabase.from('orders').update({ status: 'accepted', agreed_price: proposal.amount }).eq('id', proposal.order_id); 
+    
+    // Atualiza o pedido com o ID do motorista e o preço combinado
+    await supabase.from('orders').update({ 
+        status: 'accepted', 
+        agreed_price: proposal.amount,
+        prestador_id: proposal.driver_id // Garante que vinculamos o prestador ao pedido
+    }).eq('id', proposal.order_id); 
+    
     if (currentOrderIdForProposals) handleViewProposals(currentOrderIdForProposals, false); 
     fetchOrders(currentUser.id);
     toast.success('Proposta aceita! Combine o pagamento.'); 
   };
-
+  
   // --- FUNÇÕES DE INÍCIO DE PAGAMENTO ---
   
   // Opção 1: Pagar por uma proposta (Vinculada a um pedido)
@@ -797,7 +819,7 @@ export default function ClientDashboard() {
                 )}
             </div>
         )}
-        
+
         {/* BOTÃO NOVO PEDIDO (SÓ APARECE NA ABA MEUS PEDIDOS) */}
         {activeTab === 'active' && (
             <button onClick={openNewOrderModal} className="w-full bg-gradient-to-r from-blue-600 to-blue-500 text-white py-4 rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2 mb-8 active:scale-[0.98] transition-all border border-blue-400/20">
@@ -805,7 +827,7 @@ export default function ClientDashboard() {
             </button>
         )}
 
-        {/* LISTA DE PEDIDOS CLÁSSICA */}
+{/* LISTA DE PEDIDOS CLÁSSICA */}
         {!loading && activeTab !== 'online' && filteredOrders.map((order) => (
             <div key={order.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-6 hover:shadow-md transition-shadow">
                 <div className={`px-6 py-4 border-b flex justify-between items-center ${activeTab === 'review' ? 'bg-yellow-50 border-yellow-100' : 'bg-gray-50 border-gray-100'}`}>
@@ -838,23 +860,50 @@ export default function ClientDashboard() {
                     </div>
                     
                     <div className="flex gap-3 flex-wrap">
-                        <button onClick={() => handleViewProposals(order.id)} className="flex-[2] bg-gray-900 text-white font-bold py-3.5 rounded-xl text-sm flex items-center justify-center gap-2 relative shadow-md">
-                            {order.status === 'open' ? <><DollarSign size={16}/> Ver Ofertas ({order.proposal_count})</> : <><MessageSquare size={16}/> Chat e Detalhes</>}
+                        {/* BOTÃO PRINCIPAL: VER OFERTAS / CHAT */}
+                        <button onClick={() => handleViewProposals(order.id)} className="flex-[2] bg-gray-900 text-white font-bold py-3.5 rounded-xl text-sm flex items-center justify-center gap-2 relative shadow-md hover:bg-black transition-colors">
+                            {order.status === 'open' ? <><DollarSign size={16}/> Ver Ofertas ({order.proposal_count})</> : <><MessageSquare size={16}/> Ver Chapa / Chat</>}
                             {(order as any).unread_total > 0 && <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold w-6 h-6 flex items-center justify-center rounded-full animate-bounce border-2 border-white">{(order as any).unread_total}</span>}
                         </button>
 
+                        {/* BOTÃO FINALIZAR (Se aceito ou pago) */}
                         {['accepted', 'paid'].includes(order.status) && (
                             <button onClick={() => handleFinishOrder(order.id)} className="flex-1 bg-white border border-green-200 text-green-600 font-bold py-3.5 rounded-xl text-xs flex items-center justify-center gap-2 hover:bg-green-50">
                                 <CheckCircle size={16}/> Finalizar
                             </button>
                         )}
 
+                        {/* BOTÃO AVALIAR (Se concluído e não avaliado) */}
+                        {(order.status === 'completed' || order.status === 'paid') && !order.user_has_reviewed && (
+                             <button 
+                                onClick={async () => {
+                                    // Busca rápida para saber quem avaliar
+                                    const { data } = await supabase.from('proposals').select('driver_id, driver:profiles(nome_razao)').eq('order_id', order.id).eq('is_accepted', true).single();
+                                    if(data) {
+                                        // CORREÇÃO AQUI: Tratamos driver como 'any' para evitar erro de array vs objeto
+                                        const driverData: any = data.driver;
+                                        const driverName = Array.isArray(driverData) ? driverData[0]?.nome_razao : driverData?.nome_razao;
+                                        
+                                        setRatingTarget({ name: driverName || 'Chapa', id: data.driver_id, orderId: order.id });
+                                        setShowRatingModal(true);
+                                    } else {
+                                        toast.error("Erro ao encontrar prestador.");
+                                    }
+                                }} 
+                                className="flex-1 bg-yellow-400 text-yellow-900 font-bold py-3.5 rounded-xl text-xs flex items-center justify-center gap-2 hover:bg-yellow-500 shadow-sm"
+                             >
+                                <Star size={16} fill="currentColor"/> Avaliar
+                             </button>
+                        )}
+
+                        {/* BOTÃO RECIBO (Se concluído) */}
                         {order.status === 'completed' && (
                             <button onClick={() => generateReceipt(order)} className="flex-1 bg-gray-100 text-gray-700 font-bold py-3.5 rounded-xl text-sm flex items-center justify-center gap-2 border hover:bg-gray-200">
                                 <FileText size={18}/> Recibo
                             </button>
                         )}
 
+                        {/* AÇÕES DE EDIÇÃO (Se aberto) */}
                         {order.status === 'open' && (
                             <>
                                 <button onClick={() => openEditOrderModal(order)} className="w-12 h-12 flex items-center justify-center rounded-xl border border-gray-200 text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"><Edit3 size={18}/></button>
@@ -862,8 +911,9 @@ export default function ClientDashboard() {
                             </>
                         )}
 
+                        {/* CANCELAR (Se em andamento) */}
                         {order.status !== 'open' && order.status !== 'completed' && (
-                            <button onClick={() => initiateCancel(order.id)} className="w-12 h-12 border border-red-200 bg-red-50 text-red-500 font-bold rounded-xl flex items-center justify-center hover:bg-red-100 transition-colors">
+                            <button onClick={() => initiateCancel(order.id)} className="w-12 h-12 border border-red-200 bg-red-50 text-red-500 font-bold rounded-xl flex items-center justify-center hover:bg-red-100 transition-colors" title="Cancelar Pedido">
                                 <Trash2 size={18}/>
                             </button>
                         )}
@@ -886,7 +936,7 @@ export default function ClientDashboard() {
           </div>
       )}
 
-      {/* --- MODAL 2: PROPOSTAS (COM CORREÇÃO DE PAGAMENTO) --- */}
+      {/* --- MODAL 2: PROPOSTAS --- */}
       {showProposalsModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-40 backdrop-blur-sm animate-in fade-in">
             <div className="bg-white rounded-3xl w-full max-w-lg p-0 overflow-hidden max-h-[90vh] flex flex-col shadow-2xl">
@@ -899,10 +949,15 @@ export default function ClientDashboard() {
                         <div key={prop.id} className={`border rounded-2xl p-5 bg-white shadow-sm ${prop.is_accepted ? 'border-green-500 ring-1 ring-green-100' : 'border-gray-200'}`}>
                             <div className="flex justify-between items-start mb-4">
                                 <div>
-                                    <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
-                                        {prop.driver?.nome_razao || 'Chapa'}
-                                        {prop.is_accepted && <span className="bg-green-50 text-green-600 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-green-200">Contratado</span>}
-                                    </h3>
+                                    <div className="flex items-center gap-2">
+                                        <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+                                            {prop.driver?.nome_razao || 'Chapa'}
+                                            {prop.is_accepted && <span className="bg-green-50 text-green-600 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-green-200">Contratado</span>}
+                                        </h3>
+                                        {/* BOTÃO DE DENÚNCIA ADICIONADO AQUI */}
+                                        <button onClick={() => handleReport(prop.driver?.id || '', prop.order_id)} className="text-gray-300 hover:text-red-500 transition-colors" title="Denunciar este prestador">                                            <AlertTriangle size={16}/>
+                                        </button>
+                                    </div>
                                     <div className="flex items-center gap-1.5 mt-1 text-xs"><div className="flex text-yellow-500"><Star size={14} fill="currentColor" /></div><span className="font-bold text-gray-500">{prop.driver_rating?.toFixed(1)}</span></div>
                                 </div>
                                 <div className="text-right">
@@ -912,21 +967,16 @@ export default function ClientDashboard() {
                             </div>
                             <div className="bg-blue-50 p-4 rounded-xl mb-5 border border-blue-100 text-sm text-blue-900 italic relative">"{prop.message}"</div>
                             
-                            {/* --- CORREÇÃO: BOTÃO DE PAGAMENTO VISÍVEL SEMPRE (SE NÃO PAGO) --- */}
-                            
-                            {/* Se o pedido AINDA NÃO FOI PAGO, mostra botão de pagar (independente de aceito ou não) */}
+                            {/* Se não pago, mostra botão de liberar contato */}
                             {currentOrder?.status !== 'paid' && (
                                 <div className="mb-4">
-                                    <button 
-                                        onClick={() => startUnlockProcess(prop)} 
-                                        className="w-full bg-blue-50 text-blue-600 border border-blue-100 py-3.5 rounded-xl text-xs font-bold flex justify-center gap-2 items-center hover:bg-blue-100 transition-colors"
-                                    >
+                                    <button onClick={() => startUnlockProcess(prop)} className="w-full bg-blue-50 text-blue-600 border border-blue-100 py-3.5 rounded-xl text-xs font-bold flex justify-center gap-2 items-center hover:bg-blue-100 transition-colors">
                                         <Lock size={14}/> Liberar WhatsApp Agora (R$ 4,99)
                                     </button>
                                 </div>
                             )}
 
-                            {/* Se o pedido JÁ FOI PAGO e esta proposta foi a escolhida, mostra telefone */}
+                            {/* Se PAGO e aceito, mostra WhatsApp */}
                             {currentOrder?.status === 'paid' && prop.is_accepted && (
                                 <div className="mt-3 bg-green-50 border border-green-200 p-4 rounded-xl flex justify-between items-center mb-4 animate-in fade-in">
                                     <div>

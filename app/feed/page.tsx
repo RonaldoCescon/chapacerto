@@ -233,7 +233,7 @@ export default function DriverFeed() {
                 const data = await res.json();
                 if (data.status === 'approved') {
                     if(currentPaymentProposal) {
-                        await supabase.from('orders').update({ status: 'paid' }).eq('id', currentPaymentProposal.order.id);
+                        await supabase.from('orders').update({ status: 'paid', is_paid_fee: true }).eq('id', currentPaymentProposal.order.id);
                         setPaymentStep('success'); 
                         playSound(); 
                         toast.success("Pagamento confirmado!");
@@ -492,7 +492,7 @@ export default function DriverFeed() {
             </div>
         )}
 
-        {/* LISTAS PROPOSTAS */}
+{/* LISTAS PROPOSTAS */}
         {!loading && activeTab !== 'feed' && (
             <div className="space-y-5">
                 {filteredProposals.length === 0 && <div className="text-center py-16 bg-white rounded-3xl border border-dashed border-gray-200 text-gray-400 text-sm">Lista vazia.</div>}
@@ -545,18 +545,26 @@ export default function DriverFeed() {
                                         <button onClick={() => handleFinish(prop.order.id)} className="col-span-2 bg-gray-900 text-white font-bold py-3.5 rounded-xl text-xs flex justify-center gap-2 items-center shadow-lg active:scale-95 hover:bg-black"><CheckCircle size={16}/> Finalizar Serviço</button>
                                     )}
                                 </div>
+                                
+                                {/* BOTÃO AVALIAR (Se finalizado) */}
                                 {prop.order.status === 'completed' && !prop.userHasReviewed && (
                                     <button onClick={() => { setRatingTarget({name: prop.order.client.nome_razao, id: prop.order.client.id, orderId: prop.order.id}); setShowRatingModal(true); }} className="w-full bg-yellow-400 text-black font-bold py-3.5 rounded-xl text-xs flex justify-center gap-2 shadow-lg hover:bg-yellow-500"><Star size={16}/> Avaliar Cliente</button>
                                 )}
+
+                                {/* BOTÃO DENUNCIAR (ADICIONADO AQUI) */}
+                                <button onClick={() => handleReport(prop.order.client.id, prop.order.id)} className="w-full text-gray-400 font-bold text-[10px] flex items-center justify-center gap-1 mt-2 hover:text-red-500 transition-colors">
+                                    <AlertTriangle size={12}/> Denunciar Cliente / Problema
+                                </button>
                             </div>
                         )}
                     </div>
                 ))}
             </div>
         )}
-      </main>
 
-      {/* MODAL PROPOSTA INTELIGENTE */}
+</main> {/* <--- O ERRO ERA A FALTA DESTE FECHAMENTO */}
+
+      {/* --- MODAL PROPOSTA INTELIGENTE --- */}
       {showProposalModal && selectedOrder && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-in fade-in backdrop-blur-sm">
               <div className="bg-white w-full max-w-sm p-8 rounded-3xl shadow-2xl animate-in zoom-in-95">
@@ -585,7 +593,7 @@ export default function DriverFeed() {
           </div>
       )}
 
-      {/* MODAL PAGAMENTO (PARA LIBERAR CONTATO) */}
+      {/* --- MODAL PAGAMENTO (LIBERAR CONTATO) --- */}
       {showPaymentModal && currentPaymentProposal && (
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm animate-in fade-in">
                 <div className="bg-white w-full max-w-sm p-8 rounded-3xl text-center shadow-2xl relative">
@@ -608,7 +616,7 @@ export default function DriverFeed() {
             </div>
       )}
 
-      {/* OUTROS MODAIS MANTIDOS */}
+      {/* --- MODAL AVALIAÇÃO --- */}
       {showRatingModal && ratingTarget && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-60 backdrop-blur-sm">
               <div className="bg-white rounded-3xl p-8 w-full max-w-sm text-center shadow-2xl">
@@ -622,6 +630,7 @@ export default function DriverFeed() {
           </div>
       )}
 
+      {/* --- MODAL CHAT --- */}
       {showChatModal && currentChatProposal && currentUser && (
           <ChatModal proposalId={currentChatProposal.id} driverName={currentChatProposal.order.client.nome_razao} currentUserId={currentUser.id} onClose={() => setShowChatModal(false)} onMessagesRead={() => loadMyProposals(currentUser.id)} />
       )}
