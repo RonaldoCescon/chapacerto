@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+// 1. IMPORT DO NEXT DYNAMIC
+import dynamic from 'next/dynamic'; 
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { 
@@ -10,11 +12,24 @@ import {
   MessageSquare, Star, Calendar, ShieldCheck, UserCircle, 
   Edit3, Box, Truck, Armchair, AlertTriangle, 
   Search, List, History, ThumbsUp, Lock, FileText, MapPin, Zap, Navigation,
-  Users, Map,Briefcase, Hammer // <--- ADICIONE O 'Hammer'
+  Users, Map, Briefcase, Hammer
 } from 'lucide-react';
 import ChatModal from '@/components/ChatModal';
 import jsPDF from 'jspdf';
 
+// 2. DEFINIÇÃO DO COMPONENTE MAPA (IMPORTAÇÃO DINÂMICA)
+// Isso impede que o Leaflet tente carregar no servidor (o que quebraria o app)
+const MapRadar = dynamic(() => import('../components/MapRadar'), { 
+  ssr: false,
+  loading: () => (
+    <div className="h-[400px] w-full bg-gray-100 rounded-3xl animate-pulse flex flex-col items-center justify-center text-gray-400 gap-2">
+      <Map size={32} className="opacity-20"/>
+      <span className="text-xs font-medium">Carregando Mapa...</span>
+    </div>
+  )
+});
+
+// ... (O resto do código: Interfaces, Constantes, Componente Principal continuam abaixo)
 // --- INTERFACES E TIPAGENS ---
 
 interface Order { 
@@ -113,9 +128,13 @@ export default function ClientDashboard() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // Abas de Navegação
+ // Abas de Navegação
   const [activeTab, setActiveTab] = useState<'active' | 'review' | 'history' | 'online'>('active');
 
+  // --- ADICIONE ESTES NOVOS ESTADOS AQUI: ---
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list'); 
+  const [userLat, setUserLat] = useState<number | null>(null);
+  const [userLng, setUserLng] = useState<number | null>(null);
   // --- MODAIS ---
   const [showNewOrderModal, setShowNewOrderModal] = useState(false);
   const [showProposalsModal, setShowProposalsModal] = useState(false);
@@ -199,7 +218,7 @@ export default function ClientDashboard() {
     }, () => { toast.error("Permissão de GPS negada."); setIsGettingGPS(false); });
   };
 
-  // --- FUNÇÃO PARA BUSCAR CHAPAS ONLINE ---
+ // --- FUNÇÃO PARA BUSCAR CHAPAS ONLINE ---
   const fetchOnlineDrivers = async () => {
     setIsSearchingDrivers(true);
     if (!navigator.geolocation) {
@@ -209,6 +228,11 @@ export default function ClientDashboard() {
     }
 
     navigator.geolocation.getCurrentPosition(async (pos) => {
+        // --- ADICIONE ESTAS DUAS LINHAS AQUI: ---
+        setUserLat(pos.coords.latitude);
+        setUserLng(pos.coords.longitude);
+        // ----------------------------------------
+
         try {
             // Busca apenas prestadores DISPONÍVEIS
             const { data: drivers } = await supabase
@@ -684,12 +708,29 @@ export default function ClientDashboard() {
             <button onClick={() => setActiveTab('history')} className={`py-3 text-[10px] font-bold rounded-xl uppercase transition-all ${activeTab === 'history' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>Histórico</button>
         </div>
 
-{/* --- ABA PRESTADORES ONLINE --- */}
+{/* --- ABA PRESTADORES ONLINE (COM MAPA E LISTA) --- */}
         {activeTab === 'online' && (
             <div className="space-y-4 animate-in fade-in">
-                <div className="bg-green-50 p-4 rounded-3xl border border-green-200 text-center mb-6">
-                    <h3 className="font-bold text-green-800 text-sm mb-1 flex items-center justify-center gap-2"><Map size={16}/> Radar de Profissionais</h3>
-                    <p className="text-xs text-green-700">Encontre prestadores disponíveis perto de você agora mesmo.</p>
+                
+                {/* HEADER DA ABA + BOTÕES DE TROCA (LISTA vs MAPA) */}
+                <div className="bg-white p-2 rounded-3xl border border-gray-200 flex justify-between items-center shadow-sm mb-4">
+                    <div className="flex-1 text-center pl-4">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide text-left">Modo de Visualização</p>
+                    </div>
+                    <div className="flex bg-gray-100 p-1 rounded-2xl">
+                        <button 
+                            onClick={() => setViewMode('list')} 
+                            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${viewMode === 'list' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                        >
+                            Lista
+                        </button>
+                        <button 
+                            onClick={() => setViewMode('map')} 
+                            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${viewMode === 'map' ? 'bg-green-600 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                        >
+                            <Map size={14}/> Mapa
+                        </button>
+                    </div>
                 </div>
 
                 {isSearchingDrivers && <div className="text-center py-10"><Loader2 className="animate-spin mx-auto text-blue-600"/></div>}
@@ -702,51 +743,61 @@ export default function ClientDashboard() {
                     </div>
                 )}
 
-                {!isSearchingDrivers && onlineDrivers.map(driver => (
-                    <div key={driver.id} className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex flex-col gap-4 relative overflow-hidden group hover:border-green-300 transition-all">
-                        <div className="absolute top-0 right-0 bg-green-500 text-white text-[9px] font-bold px-3 py-1 rounded-bl-xl shadow-sm animate-pulse flex items-center gap-1"><span className="w-1.5 h-1.5 bg-white rounded-full"></span> ONLINE</div>
-                        
-                        <div className="flex items-start gap-4">
-                            <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center text-gray-500 font-bold text-lg border border-gray-200">
-                                {driver.nome_razao.charAt(0)}
-                            </div>
-                            <div>
-                                <h3 className="font-bold text-gray-900 text-lg">{driver.nome_razao}</h3>
+                {/* --- VISÃO MAPA --- */}
+                {!isSearchingDrivers && onlineDrivers.length > 0 && viewMode === 'map' && (
+                    <MapRadar 
+                        userLat={userLat} 
+                        userLng={userLng} 
+                        drivers={onlineDrivers} 
+                        onSelectDriver={handleDirectPayment}
+                    />
+                )}
+
+                {/* --- VISÃO LISTA --- */}
+                {!isSearchingDrivers && onlineDrivers.length > 0 && viewMode === 'list' && (
+                    <div className="space-y-4">
+                        {onlineDrivers.map(driver => (
+                            <div key={driver.id} className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex flex-col gap-4 relative overflow-hidden group hover:border-green-300 transition-all">
+                                <div className="absolute top-0 right-0 bg-green-500 text-white text-[9px] font-bold px-3 py-1 rounded-bl-xl shadow-sm animate-pulse flex items-center gap-1"><span className="w-1.5 h-1.5 bg-white rounded-full"></span> ONLINE</div>
                                 
-                                {/* Distância Corrigida */}
-                                {driver.distance !== undefined && (
-                                    <p className="text-xs text-green-600 font-bold flex items-center gap-1 mb-1">
-                                        <MapPin size={12}/> 
-                                        {driver.distance < 0.1 ? 'Muito perto' : `A ${driver.distance.toFixed(1)} km`}
-                                    </p>
-                                )}
-                                
-                                {/* Habilidades com Ícones */}
-                                <div className="flex flex-wrap gap-1.5 mt-1">
-                                    {driver.skills && driver.skills.length > 0 ? (
-                                        driver.skills.slice(0, 4).map((skillId: string) => (
-                                            <span key={skillId} className="bg-blue-50 text-blue-700 border border-blue-100 text-[9px] px-2 py-1 rounded-md uppercase font-bold flex items-center gap-1">
-                                                {getCargoIcon(skillId)}
-                                                {getSkillLabel(skillId)}
-                                            </span>
-                                        ))
-                                    ) : (
-                                        <span className="text-[10px] text-gray-400 italic">Geral</span>
-                                    )}
+                                <div className="flex items-start gap-4">
+                                    <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center text-gray-500 font-bold text-lg border border-gray-200">{driver.nome_razao.charAt(0)}</div>
+                                    <div>
+                                        <h3 className="font-bold text-gray-900 text-lg">{driver.nome_razao}</h3>
+                                        
+                                        {driver.distance !== undefined && (
+                                            <p className="text-xs text-green-600 font-bold flex items-center gap-1 mb-1">
+                                                <MapPin size={12}/> {driver.distance < 0.1 ? 'Muito perto' : `A ${driver.distance.toFixed(1)} km`}
+                                            </p>
+                                        )}
+                                        
+                                        <div className="flex flex-wrap gap-1.5 mt-1">
+                                            {driver.skills && driver.skills.length > 0 ? (
+                                                driver.skills.slice(0, 4).map((skillId: string) => (
+                                                    <span key={skillId} className="bg-blue-50 text-blue-700 border border-blue-100 text-[9px] px-2 py-1 rounded-md uppercase font-bold flex items-center gap-1">
+                                                        {getCargoIcon(skillId)}
+                                                        {getSkillLabel(skillId)}
+                                                    </span>
+                                                ))
+                                            ) : (
+                                                <span className="text-[10px] text-gray-400 italic">Geral</span>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
+
+                                {driver.bio && <p className="text-xs text-gray-500 italic bg-gray-50 p-3 rounded-xl line-clamp-2 border border-gray-100">"{driver.bio}"</p>}
+
+                                <button onClick={() => handleDirectPayment(driver)} className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-lg flex items-center justify-center gap-2 hover:bg-blue-700 transition-transform active:scale-95 text-xs uppercase tracking-wide">
+                                    <Lock size={14}/> Liberar Contato (R$ 4,99)
+                                </button>
                             </div>
-                        </div>
-
-                        {driver.bio && <p className="text-xs text-gray-500 italic bg-gray-50 p-3 rounded-xl line-clamp-2 border border-gray-100">"{driver.bio}"</p>}
-
-                        <button onClick={() => handleDirectPayment(driver)} className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-lg flex items-center justify-center gap-2 hover:bg-blue-700 transition-transform active:scale-95 text-xs uppercase tracking-wide">
-                            <Lock size={14}/> Liberar Contato (R$ 4,99)
-                        </button>
+                        ))}
                     </div>
-                ))}
+                )}
             </div>
         )}
-
+        
         {/* BOTÃO NOVO PEDIDO (SÓ APARECE NA ABA MEUS PEDIDOS) */}
         {activeTab === 'active' && (
             <button onClick={openNewOrderModal} className="w-full bg-gradient-to-r from-blue-600 to-blue-500 text-white py-4 rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2 mb-8 active:scale-[0.98] transition-all border border-blue-400/20">
