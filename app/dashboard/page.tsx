@@ -9,26 +9,47 @@ import {
   Phone, Copy, Clock, MessageCircle, Loader2, Trash2, 
   MessageSquare, Star, Calendar, ShieldCheck, UserCircle, 
   Edit3, Box, Truck, Armchair, AlertTriangle, 
-  Search, List, History, ThumbsUp, Lock, FileText, MapPin, Zap
+  Search, List, History, ThumbsUp, Lock, FileText, MapPin, Zap, Navigation
 } from 'lucide-react';
 import ChatModal from '@/components/ChatModal';
 import jsPDF from 'jspdf';
 
-// --- TIPAGENS ---
+// --- INTERFACES E TIPAGENS ---
+
 interface Order { 
-  id: string; origin: string; destination: string;
-  description: string; status: string; updated_at: string;
-  created_at: string; scheduled_date?: string; scheduled_time?: string; 
-  agreed_price?: number; proposal_count?: number; cargo_type?: string; 
-  clean_description?: string; user_has_reviewed?: boolean;
+  id: string; 
+  origin: string; 
+  destination: string;
+  description: string; 
+  status: string; 
+  updated_at: string;
+  created_at: string; 
+  scheduled_date?: string; 
+  scheduled_time?: string; 
+  agreed_price?: number; 
+  proposal_count?: number; 
+  cargo_type?: string; 
+  clean_description?: string; 
+  user_has_reviewed?: boolean;
+  lat?: number; // Coordenada Latitude
+  lng?: number; // Coordenada Longitude
 }
 
 interface Proposal { 
-  id: string; amount: number; message: string; driver_id: string; 
-  driver: { nome_razao: string; telefone: string; id: string } | null; 
-  is_accepted: boolean; order_id: string; unread_count?: number; driver_rating?: number; 
-  proposed_date?: string; proposed_time?: string;
-  created_at: string; userHasReviewed?: boolean; 
+  id: string; 
+  amount: number; 
+  message: string; 
+  driver_id: string; 
+  // Correção para evitar erro de tipo no driver
+  driver: { nome_razao: string; telefone: string; id: string; cpf?: string } | null; 
+  is_accepted: boolean; 
+  order_id: string; 
+  unread_count?: number; 
+  driver_rating?: number; 
+  proposed_date?: string; 
+  proposed_time?: string;
+  created_at: string; 
+  userHasReviewed?: boolean; 
 }
 
 const CARGO_TYPES = [
@@ -38,6 +59,7 @@ const CARGO_TYPES = [
   { id: 'ajudante', label: 'Ajudante Geral', icon: <UserCircle size={20}/> },
 ];
 
+// --- HELPER DE ÍCONES ---
 const getCargoIcon = (type: string | undefined) => {
     switch(type?.toLowerCase()) {
         case 'sacaria': return <Package size={14} />;
@@ -52,13 +74,14 @@ export default function ClientDashboard() {
   const router = useRouter();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   
+  // --- ESTADOS DE USUÁRIO E DADOS ---
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [currentProfile, setCurrentProfile] = useState<any>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'active' | 'review' | 'history'>('active');
 
-  // Modais
+  // --- ESTADOS DE CONTROLE DE MODAIS ---
   const [showNewOrderModal, setShowNewOrderModal] = useState(false);
   const [showProposalsModal, setShowProposalsModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -66,17 +89,35 @@ export default function ClientDashboard() {
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
 
-  // Edição e Forms
+  // --- ESTADOS DE FORMULÁRIO E EDIÇÃO ---
   const [isEditing, setIsEditing] = useState(false);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
-  const [orderForm, setOrderForm] = useState({ origin: '', description: '', date: '', time: '', cargoType: 'sacaria', price: '' });
+  
+  // Form State Unificado
+  const [orderForm, setOrderForm] = useState({ 
+    origin: '', 
+    description: '', 
+    date: '', 
+    time: '', 
+    cargoType: 'sacaria', 
+    price: '', 
+    lat: null as number | null, 
+    lng: null as number | null 
+  });
 
-  // Dados Auxiliares
+  // --- NOVOS ESTADOS: GEOLOCALIZAÇÃO ---
+  const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
+  const [isSearchingAddress, setIsSearchingAddress] = useState(false);
+  const [isGettingGPS, setIsGettingGPS] = useState(false);
+
+  // --- DADOS AUXILIARES (SELEÇÃO) ---
   const [selectedOrderProposals, setSelectedOrderProposals] = useState<Proposal[]>([]);
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
   const [proposalsLoading, setProposalsLoading] = useState(false);
   const [currentProposal, setCurrentProposal] = useState<Proposal | null>(null);
   const [currentOrderIdForProposals, setCurrentOrderIdForProposals] = useState<string | null>(null);
+  
+  // Avaliação
   const [ratingTarget, setRatingTarget] = useState<{name: string, id: string, orderId: string} | null>(null);
   const [stars, setStars] = useState(5);
 
@@ -88,17 +129,95 @@ export default function ClientDashboard() {
   const [pixData, setPixData] = useState<{ qr_code: string; qr_code_base64: string; id: number } | null>(null);
   const [paymentStep, setPaymentStep] = useState<'idle' | 'generating' | 'waiting' | 'processing' | 'success'>('idle');
 
-  // Helpers
-  const formatDate = (dateStr: string | undefined) => { if (!dateStr) return 'A combinar'; const [year, month, day] = dateStr.split('-'); return `${day}/${month}/${year}`; };
-  const formatProposalTime = (iso: string) => iso ? new Date(iso).toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}) : '';
-  const getWhatsAppLink = (phone: string) => `https://wa.me/55${phone.replace(/\D/g, '')}`;
-  const parseOrderData = (order: any) => { const match = order.description ? order.description.match(/^\[(.*?)\]/) : null; const cargo = match ? match[1] : 'sacaria'; const cleanDesc = match ? order.description.replace(/^\[.*?\]\s*/, '') : order.description; return { ...order, cargo_type: cargo, clean_description: cleanDesc }; };
+  // --- FUNÇÕES UTILITÁRIAS ---
+  const formatDate = (dateStr: string | undefined) => { 
+    if (!dateStr) return 'A combinar'; 
+    const [year, month, day] = dateStr.split('-'); 
+    return `${day}/${month}/${year}`; 
+  };
   
-  const playSound = () => { if (audioRef.current) { audioRef.current.currentTime = 0; audioRef.current.play().catch(() => {}); } };
-  const notifyUser = (msg: string) => { playSound(); toast.info(msg, { duration: 5000, icon: <Zap className="text-yellow-500"/> }); };
-  const checkChatExpired = (order: Order) => { if (order.status !== 'completed') return false; const finishDate = new Date(order.updated_at).getTime(); const now = new Date().getTime(); return (now - finishDate) / (1000 * 3600 * 24) > 5; };
+  const formatProposalTime = (iso: string) => iso ? new Date(iso).toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}) : '';
+  
+  const getWhatsAppLink = (phone: string) => `https://wa.me/55${phone.replace(/\D/g, '')}`;
+  
+  const parseOrderData = (order: any) => { 
+    const match = order.description ? order.description.match(/^\[(.*?)\]/) : null; 
+    const cargo = match ? match[1] : 'sacaria'; 
+    const cleanDesc = match ? order.description.replace(/^\[.*?\]\s*/, '') : order.description; 
+    return { ...order, cargo_type: cargo, clean_description: cleanDesc }; 
+  };
+  
+  const playSound = () => { 
+    if (audioRef.current) { 
+        audioRef.current.currentTime = 0; 
+        audioRef.current.play().catch(() => {}); 
+    } 
+  };
+  
+  const notifyUser = (msg: string) => { 
+    playSound(); 
+    toast.info(msg, { duration: 5000, icon: <Zap className="text-yellow-500"/> }); 
+  };
+  
+  const checkChatExpired = (order: Order) => { 
+    if (order.status !== 'completed') return false; 
+    const finishDate = new Date(order.updated_at).getTime(); 
+    const now = new Date().getTime(); 
+    return (now - finishDate) / (1000 * 3600 * 24) > 5; 
+  };
 
-  // --- INIT ---
+  // --- FUNÇÕES DE MAPA E GPS (NOVO) ---
+  const handleAddressSearch = async (query: string) => {
+    setOrderForm({ ...orderForm, origin: query });
+    if (query.length < 4) { 
+        setAddressSuggestions([]); 
+        return; 
+    }
+    
+    setIsSearchingAddress(true);
+    try {
+      // API Gratuita do OpenStreetMap (Nominatim)
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=br&limit=5`);
+      const data = await res.json();
+      setAddressSuggestions(data);
+    } catch (err) { 
+        console.error("Erro mapa", err); 
+    } finally { 
+        setIsSearchingAddress(false); 
+    }
+  };
+
+  const fillWithGPS = () => {
+    if (!navigator.geolocation) return toast.error("GPS não suportado neste dispositivo.");
+    
+    setIsGettingGPS(true);
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      try {
+        const { latitude, longitude } = pos.coords;
+        // Busca reversa: Coordenadas -> Endereço
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+        const data = await res.json();
+        
+        setOrderForm(prev => ({ 
+            ...prev, 
+            origin: data.display_name, 
+            lat: latitude, 
+            lng: longitude 
+        }));
+        toast.success("Localização capturada com sucesso!");
+      } catch { 
+          toast.error("Erro ao converter GPS em endereço."); 
+      } finally { 
+          setIsGettingGPS(false); 
+      }
+    }, () => {
+      toast.error("Permissão de GPS negada. Verifique as configurações.");
+      setIsGettingGPS(false);
+    });
+  };
+
+  // --- INICIALIZAÇÃO E REALTIME ---
+  
   useEffect(() => { 
     if (typeof window !== 'undefined') audioRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'); 
     
@@ -115,7 +234,7 @@ export default function ClientDashboard() {
     init();
   }, [router]);
 
-  // --- POLLING PAGAMENTO ---
+  // Polling de Pagamento (Verifica status do PIX a cada 3s)
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (showPaymentModal && paymentStep === 'waiting' && pixData?.id) {
@@ -123,13 +242,11 @@ export default function ClientDashboard() {
             try {
                 const res = await fetch(`/api/pix?id=${pixData.id}`);
                 const data = await res.json();
-                if (data.status === 'approved') {
-                    if(currentProposal) {
-                        await supabase.from('orders').update({ status: 'paid' }).eq('id', currentProposal.order_id);
-                        setPaymentStep('success'); 
-                        playSound(); 
-                        toast.success("Pagamento confirmado!");
-                    }
+                if (data.status === 'approved' && currentProposal) {
+                    await supabase.from('orders').update({ status: 'paid' }).eq('id', currentProposal.order_id);
+                    setPaymentStep('success'); 
+                    playSound(); 
+                    toast.success("Pagamento confirmado! Contato liberado.");
                 }
             } catch (e) { console.error("Polling error", e); }
         }, 3000); 
@@ -137,60 +254,32 @@ export default function ClientDashboard() {
     return () => clearInterval(interval);
   }, [showPaymentModal, paymentStep, pixData, currentProposal]);
 
-  // --- REALTIME (COM DEBUG) ---
+  // Conexão Realtime (Atualizações ao vivo)
   useEffect(() => {
-    // Só conecta se tiver usuário
-    if (!currentUser?.id) {
-        console.log("⏳ Realtime aguardando usuário logar...");
-        return;
-    }
-
-    console.log("🔌 Iniciando conexão Realtime para usuário:", currentUser.id);
+    if (!currentUser?.id) return;
 
     const channel = supabase.channel(`client_dashboard_${currentUser.id}`)
-        // Escuta TUDO da tabela orders (seja insert, update ou delete)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
-            console.log("⚡ [Realtime] Mudança em Pedido:", payload);
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
             fetchOrders(currentUser.id);
-            
-            // Notificações Específicas
-            if (payload.eventType === 'UPDATE') {
-                const newOrder = payload.new as Order;
-                if (newOrder.status === 'paid') toast.success('Contato liberado!', { icon: <CheckCircle className="text-green-500"/> });
-                if (newOrder.status === 'completed') {
-                     toast.success('Serviço finalizado pelo Chapa!', { icon: <Star className="text-yellow-500"/> });
-                     setActiveTab('review');
-                }
-            }
         })
-        // Escuta Novas Propostas
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'proposals' }, (payload) => {
-            console.log("⚡ [Realtime] Nova Proposta:", payload);
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'proposals' }, () => {
             notifyUser('Nova proposta recebida! 🚚');
             fetchOrders(currentUser.id);
             if (currentOrderIdForProposals) handleViewProposals(currentOrderIdForProposals, false);
         })
-        // Escuta Novas Mensagens
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-            console.log("⚡ [Realtime] Nova Mensagem:", payload);
             if (payload.new.sender_id !== currentUser.id) { 
                 notifyUser('Nova mensagem 💬'); 
                 fetchOrders(currentUser.id); 
                 if (currentOrderIdForProposals) handleViewProposals(currentOrderIdForProposals, false);
             }
         })
-        .subscribe((status) => {
-            if (status === 'SUBSCRIBED') console.log("✅ Realtime CONECTADO com Sucesso!");
-            if (status === 'CHANNEL_ERROR') console.error("❌ Erro no canal Realtime.");
-            if (status === 'TIMED_OUT') console.error("⚠️ Timeout no Realtime.");
-        });
+        .subscribe();
 
-    return () => { 
-        console.log("🔌 Desconectando Realtime...");
-        supabase.removeChannel(channel); 
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [currentUser, currentOrderIdForProposals]);
 
+  // --- CARREGAMENTO DE DADOS ---
   const fetchOrders = async (userId: string) => {
     const { data: ordersData } = await supabase.from('orders').select('*').eq('client_id', userId).order('created_at', { ascending: false });
     
@@ -219,6 +308,7 @@ export default function ClientDashboard() {
       }));
       setOrders(ordersWithCounts as any);
       
+      // Atualiza pedido selecionado se estiver aberto
       if (currentOrderIdForProposals) {
           const found = ordersWithCounts.find(o => o.id === currentOrderIdForProposals);
           if (found) setCurrentOrder(found);
@@ -227,28 +317,27 @@ export default function ClientDashboard() {
     setLoading(false);
   };
 
-  // --- ACTIONS ---
+  // --- AÇÕES DO USUÁRIO ---
   
   const handleReport = async (targetId: string, orderId: string) => {
-    const reason = prompt("Qual o motivo da denúncia? (Assédio, Golpe, Não compareceu)");
+    const reason = prompt("Qual o motivo da denúncia?");
     if (!reason) return;
     try {
         const { error } = await supabase.from('reports').insert({
-            accuser_id: currentUser.id,
-            accused_id: targetId,
-            order_id: orderId,
-            reason: reason,
-            created_at: new Date().toISOString()
+            accuser_id: currentUser.id, 
+            accused_id: targetId, 
+            order_id: orderId, 
+            reason: reason
         });
         if (error) throw error;
         toast.success("Denúncia enviada.", { icon: <ShieldCheck className="text-green-500"/> });
-    } catch {
-        toast.error("Erro ao enviar denúncia.");
+    } catch { 
+        toast.error("Erro ao enviar denúncia."); 
     }
   };
 
   const handleFinishOrder = async (orderId: string) => {
-      if(!confirm('O serviço foi realizado? Ao confirmar, você finaliza o chamado.')) return;
+      if(!confirm('O serviço foi realizado?')) return;
       const { error } = await supabase.from('orders')
         .update({ status: 'completed', updated_at: new Date().toISOString() })
         .eq('id', orderId);
@@ -257,99 +346,71 @@ export default function ClientDashboard() {
           toast.success('Serviço finalizado!'); 
           fetchOrders(currentUser.id); 
           setActiveTab('review'); 
-      } else { 
-          toast.error('Erro ao finalizar.'); 
       }
   };
 
+  // GERAÇÃO DE RECIBO (Blindado contra erros de Null)
   const generateReceipt = async (order: any) => {
     if (order.status !== 'completed') { 
         toast.error("O serviço precisa ser finalizado."); 
         return; 
     }
-
+    
     const toastId = toast.loading('Gerando recibo...');
-
     try {
-        const { data: proposal, error } = await supabase
-            .from('proposals')
+        const { data: proposal, error } = await supabase.from('proposals')
             .select('amount, driver:profiles(nome_razao, cpf)')
             .eq('order_id', order.id)
             .eq('is_accepted', true)
             .single();
 
-        if (error || !proposal || !proposal.driver) {
-            toast.error('Erro ao encontrar dados do prestador.');
-            return;
+        if (error || !proposal) { 
+            toast.error('Dados não encontrados.'); 
+            return; 
         }
 
-        // --- CORREÇÃO: Tratamento do tipo de dado do driver (Array ou Objeto) ---
-        const driverData = Array.isArray(proposal.driver) ? proposal.driver[0] : proposal.driver;
-        const driverName = driverData?.nome_razao || 'PRESTADOR CHAPA';
-        const driverCpf = driverData?.cpf || '***.***.***-**';
-        // ------------------------------------------------------------------------
-
+        const driverData: any = Array.isArray(proposal.driver) ? proposal.driver[0] : proposal.driver;
         const doc = new jsPDF();
         
-        doc.setFontSize(18);
-        doc.text("RECIBO DE PRESTAÇÃO DE SERVIÇO", 105, 20, { align: "center" });
-        doc.setLineWidth(0.5);
-        doc.line(20, 25, 190, 25);
-
-        doc.setFontSize(10);
-        doc.text("PRESTADOR DO SERVIÇO (QUEM RECEBEU):", 20, 40);
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.text(driverName.toUpperCase(), 20, 46);
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(10);
+        // Cabeçalho
+        doc.setFontSize(18); doc.text("RECIBO DE PRESTAÇÃO DE SERVIÇO", 105, 20, { align: "center" });
+        doc.setLineWidth(0.5); doc.line(20, 25, 190, 25);
         
-        doc.text(`CPF/CNPJ: ${driverCpf}`, 20, 52);
-
-        doc.text("TOMADOR DO SERVIÇO (QUEM PAGOU):", 20, 65);
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
+        // Dados
+        doc.setFontSize(10); 
+        doc.text("PRESTADOR:", 20, 40); doc.setFontSize(12); doc.setFont("helvetica", "bold");
+        doc.text((driverData?.nome_razao || 'CHAPA').toUpperCase(), 20, 46);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(10); 
+        doc.text(`CPF/CNPJ: ${driverData?.cpf || '***.***.***-**'}`, 20, 52);
+        
+        doc.text("TOMADOR:", 20, 65); doc.setFontSize(12); doc.setFont("helvetica", "bold");
         doc.text((currentProfile?.nome_razao || 'CLIENTE').toUpperCase(), 20, 71);
-        doc.setFont("helvetica", "normal");
-
-        doc.setFontSize(10);
-        doc.text("DESCRIÇÃO DO SERVIÇO:", 20, 85);
-        doc.setFontSize(12);
-        doc.text(`${order.clean_description}`, 20, 91);
-        doc.setFontSize(10);
-        doc.text("LOCAL:", 20, 100);
-        doc.setFontSize(12);
-        doc.text(`${order.origin}`, 20, 106);
-
-        doc.setDrawColor(0);
-        doc.setFillColor(240, 240, 240);
-        doc.rect(20, 115, 170, 15, 'F');
-        doc.setFontSize(14);
-        doc.setFont("helvetica", "bold");
-        doc.text(`VALOR TOTAL: R$ ${proposal.amount.toFixed(2)}`, 180, 125, { align: "right" });
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(10);
-        doc.text(`Data do Serviço: ${formatDate(order.scheduled_date)}`, 20, 140);
         
-        doc.setFontSize(8);
-        doc.setTextColor(150);
-        doc.text("Documento gerado eletronicamente pela plataforma ChapaCerto.", 105, 280, { align: "center" });
-
-        doc.save(`Recibo_Servico_${order.id.slice(0,6)}.pdf`);
-        toast.dismiss(toastId);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(10); 
+        doc.text(`DESCRIÇÃO: ${order.clean_description}`, 20, 85);
+        doc.text(`LOCAL: ${order.origin}`, 20, 95);
+        
+        // Valor
+        doc.setFillColor(240, 240, 240); doc.rect(20, 110, 170, 15, 'F');
+        doc.setFontSize(14); doc.setFont("helvetica", "bold");
+        const val = proposal.amount ? proposal.amount.toFixed(2) : '0.00';
+        doc.text(`VALOR TOTAL: R$ ${val}`, 180, 120, { align: "right" });
+        
+        doc.save(`Recibo_${order.id.slice(0,6)}.pdf`);
+        toast.dismiss(toastId); 
         toast.success("Recibo baixado!");
-
-    } catch (err) {
-        console.error(err);
-        toast.dismiss(toastId);
-        toast.error("Erro ao gerar PDF.");
+    } catch { 
+        toast.dismiss(toastId); 
+        toast.error("Erro ao gerar PDF."); 
     }
   };
 
   const openNewOrderModal = () => { 
-      setIsEditing(false); setEditingOrderId(null);
-      setOrderForm({ origin: '', description: '', date: '', time: '', cargoType: 'sacaria', price: '' }); 
+      setIsEditing(false); 
+      setEditingOrderId(null);
+      // Limpa formulário
+      setOrderForm({ origin: '', description: '', date: '', time: '', cargoType: 'sacaria', price: '', lat: null, lng: null }); 
+      setAddressSuggestions([]); 
       setShowNewOrderModal(true); 
   };
 
@@ -361,61 +422,110 @@ export default function ClientDashboard() {
           date: order.scheduled_date || '', 
           time: order.scheduled_time || '', 
           cargoType: match ? match[1].toLowerCase() : 'sacaria',
-          price: order.agreed_price ? order.agreed_price.toString() : '' 
+          price: order.agreed_price ? order.agreed_price.toString() : '',
+          lat: order.lat || null, 
+          lng: order.lng || null
       });
-      setIsEditing(true); setEditingOrderId(order.id); setShowNewOrderModal(true); 
+      setIsEditing(true); 
+      setEditingOrderId(order.id); 
+      setShowNewOrderModal(true); 
   };
   
   const handleSaveOrder = async (e: React.FormEvent) => {
-    e.preventDefault(); setLoading(true);
+    e.preventDefault(); 
+    
+    // Trava de Segurança Geográfica
+    if (!orderForm.lat || !orderForm.lng) {
+        toast.error("Selecione um endereço da lista para calcularmos a distância.");
+        return;
+    }
+
+    setLoading(true);
     const payload = { 
         origin: orderForm.origin, 
         description: `[${orderForm.cargoType.toUpperCase()}] ${orderForm.description}`, 
         scheduled_date: orderForm.date || null, 
         scheduled_time: orderForm.time || null,
-        agreed_price: orderForm.price ? parseFloat(orderForm.price) : null 
+        agreed_price: orderForm.price ? parseFloat(orderForm.price) : null,
+        lat: orderForm.lat, 
+        lng: orderForm.lng
     };
     
-    if (isEditing && editingOrderId) await supabase.from('orders').update(payload).eq('id', editingOrderId);
-    else await supabase.from('orders').insert({ client_id: currentUser.id, status: 'open', destination: 'Local', ...payload });
+    if (isEditing && editingOrderId) {
+        await supabase.from('orders').update(payload).eq('id', editingOrderId);
+        toast.success('Pedido atualizado!');
+    } else {
+        await supabase.from('orders').insert({ client_id: currentUser.id, status: 'open', destination: 'Local', ...payload });
+        toast.success('Vaga publicada com sucesso!');
+    }
     
-    setShowNewOrderModal(false); fetchOrders(currentUser.id); setLoading(false); toast.success(isEditing ? 'Atualizado!' : 'Criado!');
+    setShowNewOrderModal(false); 
+    fetchOrders(currentUser.id); 
+    setLoading(false); 
   };
 
   const handleDeleteOrder = async (id: string) => { 
       if(confirm('Excluir este pedido?')) { 
           await supabase.from('proposals').delete().eq('order_id', id); 
           await supabase.from('orders').delete().eq('id', id);
-          setOrders(prev => prev.filter(o => o.id !== id)); toast.success('Excluído.'); 
+          fetchOrders(currentUser.id); 
+          toast.success('Pedido excluído.'); 
       } 
   };
 
-  const initiateCancel = (orderId: string) => { setCancelOrderId(orderId); setCancelReason(''); setShowCancelModal(true); };
+  const initiateCancel = (orderId: string) => { 
+      setCancelOrderId(orderId); 
+      setCancelReason(''); 
+      setShowCancelModal(true); 
+  };
   
   const confirmCancel = async () => {
-      if (!cancelOrderId || !cancelReason.trim()) { toast.error('Diga o motivo.'); return; }
+      if (!cancelOrderId || !cancelReason.trim()) { 
+          toast.error('Diga o motivo do cancelamento.'); 
+          return; 
+      }
       setSending(true);
       await supabase.from('orders').update({ status: 'open', agreed_price: null }).eq('id', cancelOrderId);
       await supabase.from('proposals').delete().eq('order_id', cancelOrderId).eq('is_accepted', true);
-      toast.success('Cancelado. Pedido voltou para a fila.'); setShowCancelModal(false); fetchOrders(currentUser.id); setSending(false);
+      
+      toast.success('Cancelado com sucesso.'); 
+      setShowCancelModal(false); 
+      fetchOrders(currentUser.id); 
+      setSending(false);
   };
 
   const handleViewProposals = async (orderId: string, openModal = true) => {
     setCurrentOrderIdForProposals(orderId);
-    if (openModal) { setShowProposalsModal(true); setProposalsLoading(true); setSelectedOrderProposals([]); }
+    if (openModal) { 
+        setShowProposalsModal(true); 
+        setProposalsLoading(true); 
+        setSelectedOrderProposals([]); 
+    }
     
-    const { data: proposals } = await supabase.from('proposals').select('*, driver:profiles(nome_razao, telefone, id)').eq('order_id', orderId).order('is_accepted', { ascending: false });
-    
+    const { data: proposals } = await supabase.from('proposals')
+        .select('*, driver:profiles(nome_razao, telefone, id)')
+        .eq('order_id', orderId)
+        .order('is_accepted', { ascending: false });
+        
     if (proposals) {
       const enhanced = await Promise.all(proposals.map(async (p: any) => {
-        const { count } = await supabase.from('messages').select('*', { count: 'exact', head: true }).eq('proposal_id', p.id).eq('is_read', false).neq('sender_id', currentUser.id);
-        const { count: reviewCount } = await supabase.from('reviews').select('*', { count: 'exact', head: true }).eq('order_id', orderId).eq('reviewer_id', currentUser.id);
-        let avg = 5; 
-        if (p.driver?.id) { 
-            const { data: r } = await supabase.from('reviews').select('stars').eq('target_id', p.driver.id); 
-            if(r?.length) avg = r.reduce((a,b)=>a+b.stars,0)/r.length; 
-        }
-        return { ...p, unread_count: count || 0, driver_rating: avg, userHasReviewed: (reviewCount || 0) > 0 };
+        // Contadores
+        const { count: msgCount } = await supabase.from('messages').select('*', { count: 'exact', head: true })
+            .eq('proposal_id', p.id).eq('is_read', false).neq('sender_id', currentUser.id);
+        
+        const { count: revC } = await supabase.from('reviews').select('*', { count: 'exact', head: true })
+            .eq('order_id', orderId).eq('reviewer_id', currentUser.id);
+        
+        // Média de Estrelas do Chapa
+        const { data: r } = await supabase.from('reviews').select('stars').eq('target_id', p.driver?.id);
+        const avg = r?.length ? r.reduce((a,b)=>a+b.stars,0)/r.length : 5;
+        
+        return { 
+            ...p, 
+            unread_count: msgCount || 0, 
+            driver_rating: avg, 
+            userHasReviewed: (revC || 0) > 0 
+        };
       }));
       setSelectedOrderProposals(enhanced as any);
     }
@@ -423,38 +533,55 @@ export default function ClientDashboard() {
   };
 
   const handleRejectProposal = async (proposalId: string) => { 
-    if (!confirm('Recusar esta proposta?')) return;
+    if (!confirm('Deseja realmente recusar esta oferta?')) return;
     await supabase.from('proposals').delete().eq('id', proposalId); 
-    setSelectedOrderProposals(prev => prev.filter(p => p.id !== proposalId)); 
+    if (currentOrderIdForProposals) handleViewProposals(currentOrderIdForProposals, false);
     fetchOrders(currentUser.id); 
     toast.success('Proposta recusada.');
   };
 
   const handleAcceptProposalFree = async (proposal: Proposal) => { 
     if(!confirm(`Aceitar proposta de R$ ${proposal.amount}?`)) return;
+    
+    // Aceita uma, rejeita as outras automaticamente (opcional, mas mantive a lógica de marcar 'accepted')
     await supabase.from('proposals').update({ is_accepted: true }).eq('id', proposal.id); 
     await supabase.from('orders').update({ status: 'accepted', agreed_price: proposal.amount }).eq('id', proposal.order_id); 
+    
     if (currentOrderIdForProposals) handleViewProposals(currentOrderIdForProposals, false); 
     fetchOrders(currentUser.id);
-    toast.success('Proposta aceita!'); 
+    toast.success('Proposta aceita! Combine o pagamento.'); 
   };
 
-  const startUnlockProcess = (proposal: Proposal) => { setCurrentProposal(proposal); setFee(4.99); setPixData(null); setPaymentStep('idle'); setShowPaymentModal(true); };
+  const startUnlockProcess = (proposal: Proposal) => { 
+      setCurrentProposal(proposal); 
+      setFee(4.99); 
+      setPixData(null); 
+      setPaymentStep('idle'); 
+      setShowPaymentModal(true); 
+  };
   
   const handleGeneratePix = async () => { 
       setPaymentStep('generating');
       try { 
           const res = await fetch('/api/pix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount: fee, description: 'Taxa ChapaCerto', email: currentUser.email }) });
           const data = await res.json(); 
-          if (res.ok) { setPixData(data); setPaymentStep('waiting'); } 
-          else { toast.error(`Erro: ${data.details}`); setPaymentStep('idle'); } 
-      } catch { toast.error('Erro conexão.'); setPaymentStep('idle'); } 
+          if (res.ok) { 
+              setPixData(data); 
+              setPaymentStep('waiting'); 
+          } else { 
+              toast.error(`Erro: ${data.details}`); 
+              setPaymentStep('idle'); 
+          } 
+      } catch { 
+          toast.error('Erro de conexão.'); 
+          setPaymentStep('idle'); 
+      } 
   };
 
   const handleOpenChat = (p: Proposal) => { 
       const order = orders.find(o => o.id === p.order_id);
       if (order && checkChatExpired(order)) {
-          toast.error('O chat expirou (5 dias após conclusão).');
+          toast.error('Chat expirado.');
           return;
       }
       setCurrentProposal(p); 
@@ -463,28 +590,40 @@ export default function ClientDashboard() {
   
   const submitReview = async () => { 
       if (ratingTarget && currentUser) { 
-          await supabase.from('reviews').insert({ order_id: ratingTarget.orderId, reviewer_id: currentUser.id, target_id: ratingTarget.id, stars: stars });
-          toast.success('Avaliação enviada!'); setShowRatingModal(false); fetchOrders(currentUser.id); 
+          await supabase.from('reviews').insert({ 
+              order_id: ratingTarget.orderId, 
+              reviewer_id: currentUser.id, 
+              target_id: ratingTarget.id, 
+              stars: stars 
+          });
+          toast.success('Avaliação enviada com sucesso!'); 
+          setShowRatingModal(false); 
+          fetchOrders(currentUser.id); 
       } 
   };
   
-  const handleLogout = async () => { await supabase.auth.signOut(); router.push('/'); };
+  const handleLogout = async () => { 
+      await supabase.auth.signOut(); 
+      router.push('/'); 
+  };
 
+  // Filtro de Abas
   const filteredOrders = orders.filter(order => {
-      if (activeTab === 'active') { return ['open', 'accepted', 'paid'].includes(order.status); } 
-      else if (activeTab === 'review') { return order.status === 'completed' && !order.user_has_reviewed; } 
-      else { return order.status === 'completed' && order.user_has_reviewed; }
+      if (activeTab === 'active') return ['open', 'accepted', 'paid'].includes(order.status);
+      if (activeTab === 'review') return order.status === 'completed' && !order.user_has_reviewed;
+      return order.status === 'completed' && order.user_has_reviewed;
   });
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans text-gray-900 pb-20 relative">
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808008_1px,transparent_1px),linear-gradient(to_bottom,#80808008_1px,transparent_1px)] bg-[size:24px_24px] pointer-events-none fixed"></div>
 
+      {/* HEADER */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-sm">
         <div className="max-w-4xl mx-auto px-4 py-4 flex justify-between items-center">
           <div className="flex items-center gap-3">
               <div className="bg-blue-600/10 p-2 rounded-xl border border-blue-500/30"><Package size={20} className="text-blue-600"/></div>
-              <div><h1 className="text-lg font-bold tracking-tight leading-none text-gray-900">Contratante<span className="text-blue-600">Pro</span></h1></div>
+              <h1 className="text-lg font-bold">Contratante<span className="text-blue-600">Pro</span></h1>
           </div>
           <div className="flex gap-3">
               <button onClick={() => router.push('/profile')} className="w-9 h-9 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center hover:bg-gray-200 transition-colors"><UserCircle size={18} className="text-gray-600"/></button>
@@ -493,25 +632,29 @@ export default function ClientDashboard() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto p-4 animate-in fade-in slide-in-from-bottom-4 duration-500 relative z-10">
+      {/* CONTEÚDO PRINCIPAL */}
+      <main className="max-w-4xl mx-auto p-4 relative z-10 animate-in fade-in slide-in-from-bottom-4">
+        
+        {/* NAVEGAÇÃO DE ABAS */}
         <div className="grid grid-cols-3 gap-2 mb-6 bg-gray-200 p-1 rounded-2xl border border-gray-300">
-            <button onClick={() => setActiveTab('active')} className={`flex items-center justify-center gap-2 py-3 text-xs font-bold rounded-xl transition-all uppercase tracking-wide ${activeTab === 'active' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>Ativos</button>
-            <button onClick={() => setActiveTab('review')} className={`flex items-center justify-center gap-2 py-3 text-xs font-bold rounded-xl transition-all uppercase tracking-wide ${activeTab === 'review' ? 'bg-white text-yellow-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>Avaliar</button>
-            <button onClick={() => setActiveTab('history')} className={`flex items-center justify-center gap-2 py-3 text-xs font-bold rounded-xl transition-all uppercase tracking-wide ${activeTab === 'history' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>Histórico</button>
+            <button onClick={() => setActiveTab('active')} className={`py-3 text-xs font-bold rounded-xl transition-all uppercase tracking-wide ${activeTab === 'active' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>Ativos</button>
+            <button onClick={() => setActiveTab('review')} className={`py-3 text-xs font-bold rounded-xl transition-all uppercase tracking-wide ${activeTab === 'review' ? 'bg-white text-yellow-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>Avaliar</button>
+            <button onClick={() => setActiveTab('history')} className={`py-3 text-xs font-bold rounded-xl transition-all uppercase tracking-wide ${activeTab === 'history' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>Histórico</button>
         </div>
 
+        {/* BOTÃO NOVO PEDIDO */}
         {activeTab === 'active' && (
-            <button onClick={openNewOrderModal} className="w-full bg-gradient-to-r from-blue-600 to-blue-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-blue-200 hover:shadow-blue-300 transition-all flex items-center justify-center gap-2 mb-8 hover:-translate-y-0.5 active:scale-[0.98] border border-blue-400/20">
+            <button onClick={openNewOrderModal} className="w-full bg-gradient-to-r from-blue-600 to-blue-500 text-white py-4 rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2 mb-8 active:scale-[0.98] transition-all border border-blue-400/20">
                 <Plus size={22} /> Solicitar Novo Serviço
             </button>
         )}
 
+        {/* LISTA DE PEDIDOS */}
         {!loading && filteredOrders.map((order) => (
-            <div key={order.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm transition-all hover:border-gray-300 overflow-hidden mb-6">
-                
+            <div key={order.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-6 hover:shadow-md transition-shadow">
                 <div className={`px-6 py-4 border-b flex justify-between items-center ${activeTab === 'review' ? 'bg-yellow-50 border-yellow-100' : 'bg-gray-50 border-gray-100'}`}>
-                    <div className="flex gap-3 text-xs font-bold text-gray-500 uppercase tracking-wide items-center">
-                        <span className="flex items-center gap-2 text-gray-700">{getCargoIcon(order.cargo_type)} {order.cargo_type}</span>
+                    <div className="flex gap-3 text-xs font-bold text-gray-500 uppercase items-center">
+                        <span className="flex items-center gap-2 text-gray-700">{getCargoIcon(order.cargo_type)} {order.cargo_type?.toUpperCase()}</span>
                         <span className="text-gray-300">|</span>
                         <span className="font-mono text-gray-400">#{order.id.slice(0,5)}</span>
                     </div>
@@ -526,98 +669,70 @@ export default function ClientDashboard() {
 
                 <div className="p-6">
                     <h3 className="text-xl font-bold text-gray-900 leading-tight mb-4">{order.clean_description}</h3>
-         
-                    {activeTab === 'review' ? (
-                        <div className="text-center py-4 bg-yellow-50 rounded-2xl border border-yellow-100">
-                            <p className="text-sm text-yellow-800 mb-4 font-medium">O serviço foi finalizado. Como foi sua experiência?</p>
-                            <button onClick={() => { setRatingTarget({name: 'O Prestador', id: '', orderId: order.id}); handleViewProposals(order.id, true); }} className="bg-yellow-400 text-black px-8 py-3 rounded-xl font-bold shadow-md hover:bg-yellow-300 transition-colors flex items-center gap-2 mx-auto active:scale-95">
-                                <Star size={20}/> Avaliar Prestador
-                            </button>
+                    
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                            <p className="text-[10px] text-gray-400 uppercase font-bold mb-1">Local</p>
+                            <p className="text-sm text-gray-700 truncate flex items-center gap-1.5"><MapPin size={14} className="text-blue-500 shrink-0"/> {order.origin}</p>
                         </div>
-                    ) : (
-                        <>
-                          <div className="grid grid-cols-2 gap-4 mb-6">
-                              <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
-                                  <p className="text-[10px] text-gray-400 uppercase font-bold mb-1">Local</p>
-                                  <p className="text-sm text-gray-700 flex items-center gap-1.5"><MapPin size={14} className="text-blue-500"/> {order.origin}</p>
-                              </div>
-                              <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
-                                  <p className="text-[10px] text-gray-400 uppercase font-bold mb-1">Data</p>
-                                  <p className="text-sm text-gray-700 flex items-center gap-1.5"><Calendar size={14} className="text-blue-500"/> {formatDate(order.scheduled_date)}</p>
-                              </div>
-                          </div>
-                          
-                          {order.agreed_price && (
-                              <div className="mb-6 p-3 bg-green-50 border border-green-100 rounded-xl flex items-center gap-2">
-                                  <div className="bg-green-100 p-1.5 rounded-lg"><DollarSign size={16} className="text-green-600"/></div>
-                                  <div>
-                                      <p className="text-[10px] text-green-700 uppercase font-bold">Valor Combinado</p>
-                                      <p className="text-lg font-bold text-green-800">R$ {order.agreed_price.toFixed(2)}</p>
-                                  </div>
-                              </div>
-                          )}
-                          
-                          <div className="flex gap-3 flex-wrap">
-                              <button onClick={() => handleViewProposals(order.id)} className="flex-[2] bg-gray-900 hover:bg-black text-white font-bold py-3.5 rounded-xl text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-md relative">
-                                  {order.status === 'open' ? <><DollarSign size={16} className="text-green-400"/> Ver Ofertas ({order.proposal_count})</> : <><MessageSquare size={16} className="text-blue-400"/> Chat e Detalhes</>}
-                                  
-                                  {(order as any).unread_total > 0 && (
-                                      <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold w-6 h-6 flex items-center justify-center rounded-full animate-bounce border-2 border-white shadow-md">
-                                          {(order as any).unread_total}
-                                      </span>
-                                  )}
-                              </button>
+                        <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                            <p className="text-[10px] text-gray-400 uppercase font-bold mb-1">Data</p>
+                            <p className="text-sm text-gray-700 flex items-center gap-1.5"><Calendar size={14} className="text-blue-500 shrink-0"/> {formatDate(order.scheduled_date)}</p>
+                        </div>
+                    </div>
+                    
+                    <div className="flex gap-3 flex-wrap">
+                        <button onClick={() => handleViewProposals(order.id)} className="flex-[2] bg-gray-900 text-white font-bold py-3.5 rounded-xl text-sm flex items-center justify-center gap-2 relative shadow-md">
+                            {order.status === 'open' ? <><DollarSign size={16}/> Ver Ofertas ({order.proposal_count})</> : <><MessageSquare size={16}/> Chat e Detalhes</>}
+                            {(order as any).unread_total > 0 && <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold w-6 h-6 flex items-center justify-center rounded-full animate-bounce border-2 border-white">{(order as any).unread_total}</span>}
+                        </button>
 
-                              {/* BOTÃO SAFETY: FINALIZAR SE O CHAPA ESQUECER */}
-                              {['accepted', 'paid'].includes(order.status) && (
-                                  <button onClick={() => handleFinishOrder(order.id)} className="flex-1 bg-white border border-green-200 text-green-600 font-bold py-3.5 rounded-xl text-xs flex items-center justify-center gap-2 hover:bg-green-50 transition-colors" title="Clique aqui se o serviço já acabou">
-                                      <CheckCircle size={16}/> Confirmar Conclusão
-                                  </button>
-                              )}
+                        {/* Botões de Ação Dinâmicos */}
+                        {['accepted', 'paid'].includes(order.status) && (
+                            <button onClick={() => handleFinishOrder(order.id)} className="flex-1 bg-white border border-green-200 text-green-600 font-bold py-3.5 rounded-xl text-xs flex items-center justify-center gap-2 hover:bg-green-50">
+                                <CheckCircle size={16}/> Finalizar
+                            </button>
+                        )}
 
-                              {order.status === 'completed' && (
-                                  <button onClick={() => generateReceipt(order)} className="flex-1 bg-gray-100 text-gray-700 border border-gray-200 font-bold py-3.5 rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-gray-200">
-                                      <FileText size={18}/> Recibo
-                                  </button>
-                              )}
+                        {order.status === 'completed' && (
+                            <button onClick={() => generateReceipt(order)} className="flex-1 bg-gray-100 text-gray-700 font-bold py-3.5 rounded-xl text-sm flex items-center justify-center gap-2 border hover:bg-gray-200">
+                                <FileText size={18}/> Recibo
+                            </button>
+                        )}
 
-                              {order.status !== 'open' && order.status !== 'completed' && (
-                                  <button onClick={() => initiateCancel(order.id)} className="w-14 border border-red-200 bg-red-50 text-red-500 font-bold py-3.5 rounded-xl flex items-center justify-center gap-1 text-sm hover:bg-red-100 transition-colors">
-                                      <Trash2 size={18}/>
-                                  </button>
-                              )}
+                        {order.status === 'open' && (
+                            <>
+                                <button onClick={() => openEditOrderModal(order)} className="w-12 h-12 flex items-center justify-center rounded-xl border border-gray-200 text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"><Edit3 size={18}/></button>
+                                <button onClick={() => handleDeleteOrder(order.id)} className="w-12 h-12 flex items-center justify-center rounded-xl border border-gray-200 text-red-500 hover:bg-red-50 transition-colors"><Trash2 size={18}/></button>
+                            </>
+                        )}
 
-                              {order.status === 'open' && (
-                                  <>
-                                      <button onClick={() => openEditOrderModal(order)} className="w-14 flex items-center justify-center rounded-xl border border-gray-200 text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"><Edit3 size={18}/></button>
-                                      <button onClick={() => handleDeleteOrder(order.id)} className="w-14 flex items-center justify-center rounded-xl border border-gray-200 text-gray-500 hover:text-red-500 hover:bg-red-50 transition-colors"><Trash2 size={18}/></button>
-                                  </>
-                              )}
-                          </div>
-                        </>
-                    )}
+                        {order.status !== 'open' && order.status !== 'completed' && (
+                            <button onClick={() => initiateCancel(order.id)} className="w-12 h-12 border border-red-200 bg-red-50 text-red-500 font-bold rounded-xl flex items-center justify-center hover:bg-red-100 transition-colors">
+                                <Trash2 size={18}/>
+                            </button>
+                        )}
+                    </div>
                 </div>
-              </div>
-          ))}
+            </div>
+        ))}
       </main>
 
-      {/* MODAL 1: CANCELAMENTO */}
+      {/* --- MODAL 1: CANCELAMENTO --- */}
       {showCancelModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-in fade-in backdrop-blur-sm">
-              <div className="bg-white w-full max-w-sm p-6 rounded-3xl shadow-2xl animate-in zoom-in-95">
-                  <div className="text-center mb-6">
-                      <div className="bg-red-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-red-500"><AlertTriangle size={32}/></div>
-                      <h3 className="text-xl font-bold text-gray-900">Cancelar Serviço?</h3>
-                      <p className="text-gray-500 text-sm mt-2">O chapa atual será dispensado e o pedido voltará para a fila.</p>
-                  </div>
-                  <textarea placeholder="Motivo do cancelamento..." className="w-full bg-gray-50 text-gray-900 rounded-xl p-4 text-sm font-medium outline-none focus:ring-2 ring-red-200 min-h-[100px] mb-4 resize-none border border-gray-200" value={cancelReason} onChange={e => setCancelReason(e.target.value)} />
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm animate-in fade-in">
+              <div className="bg-white w-full max-w-sm p-6 rounded-3xl shadow-2xl animate-in zoom-in-95 text-center">
+                  <div className="bg-red-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-red-500"><AlertTriangle size={32}/></div>
+                  <h3 className="text-xl font-bold text-gray-900">Cancelar Serviço?</h3>
+                  <p className="text-gray-500 text-sm mt-2 mb-4">O chapa atual será dispensado e o pedido voltará para a fila.</p>
+                  <textarea placeholder="Diga o motivo..." className="w-full bg-gray-50 text-gray-900 rounded-xl p-4 text-sm font-medium outline-none focus:ring-2 ring-red-200 min-h-[100px] mb-4 resize-none border border-gray-200" value={cancelReason} onChange={e => setCancelReason(e.target.value)} />
                   <button onClick={confirmCancel} disabled={sending} className="w-full bg-red-600 text-white font-bold py-4 rounded-xl hover:bg-red-700 shadow-lg shadow-red-200 transition-all">{sending ? <Loader2 className="animate-spin mx-auto"/> : 'Confirmar Cancelamento'}</button>
                   <button onClick={() => setShowCancelModal(false)} className="w-full mt-4 text-gray-400 text-sm font-bold hover:text-gray-600">Voltar</button>
               </div>
           </div>
       )}
 
-      {/* MODAL 2: PROPOSTAS */}
+      {/* --- MODAL 2: PROPOSTAS --- */}
       {showProposalsModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-40 backdrop-blur-sm animate-in fade-in">
             <div className="bg-white rounded-3xl w-full max-w-lg p-0 overflow-hidden max-h-[90vh] flex flex-col shadow-2xl">
@@ -652,44 +767,17 @@ export default function ClientDashboard() {
                                         <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Enviada: {formatProposalTime(prop.created_at)}</span>
                                     </div>
                                 </div>
+                                <div className="bg-blue-50 p-4 rounded-xl mb-5 border border-blue-100 text-sm text-blue-900 italic relative">"{prop.message}"</div>
                                 
-                                <div className="bg-blue-50 p-4 rounded-xl mb-5 border border-blue-100 text-sm text-blue-900 italic relative">
-                                    "{prop.message}"
-                                </div>
-      
-                                {/* ÁREA DE PAGAMENTO / CONTATO */}
-                                <div className="bg-gray-100 p-3 rounded-xl text-center mb-5 flex items-center justify-center gap-3 border border-gray-200 border-dashed">
-                                    <div className="flex items-center gap-2 text-gray-400"><Phone size={16}/><span className="font-mono tracking-widest font-bold">(XX) 9****-****</span></div>
-                                    <button onClick={() => startUnlockProcess(prop)} className="text-[10px] font-bold text-blue-600 bg-white border border-blue-200 px-3 py-1.5 rounded-lg ml-2 hover:bg-blue-50 transition-colors flex items-center gap-1"><Lock size={10}/> Ver Contato (R$ 4,99)</button>
-                                </div>
-
-                                {/* Botão Denunciar */}
-                                <button onClick={() => handleReport(prop.driver_id, prop.order_id)} className="text-gray-400 hover:text-red-500 text-[10px] flex items-center gap-1 mt-1 mb-3 ml-auto transition-colors"><AlertTriangle size={10}/> Denunciar</button>
-
-                                {prop.is_accepted && currentOrder?.status !== 'paid' && (
-                                    <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-xl mb-4 text-center">
-                                        <p className="text-yellow-800 font-bold text-xs mb-2 leading-relaxed">Aceito! Pague p/ liberar o zap do prestador ou combine pelo chat!</p>
-                                        <button onClick={() => startUnlockProcess(prop)} className="w-full bg-yellow-400 text-yellow-900 text-xs font-bold py-3 rounded-lg hover:bg-yellow-500 transition-colors shadow-sm">Pagar Taxa Agora</button>
-                                    </div>
-                                )}
-
-                                {prop.is_accepted && currentOrder?.status === 'paid' && (
-                                    <div className="bg-green-50 border border-green-200 p-4 rounded-xl mb-4 flex justify-between items-center">
-                                        <div><p className="text-[10px] font-bold text-green-600 uppercase">Contato Liberado</p><p className="text-lg font-mono font-bold text-green-800">{prop.driver?.telefone}</p></div>
-                                        <a href={getWhatsAppLink(prop.driver?.telefone || '')} target="_blank" className="bg-green-600 text-white p-3 rounded-full hover:bg-green-700 shadow-md transition-colors"><MessageCircle size={20}/></a>
-                                    </div>
-                                )}
-
+                                {/* CONTROLE DE AÇÕES DA PROPOSTA */}
                                 <div className="grid grid-cols-2 gap-3">
                                     {!prop.is_accepted && (
                                         <>
                                             <button onClick={() => handleRejectProposal(prop.id)} className="border border-red-200 bg-red-50 text-red-500 rounded-xl py-3 flex items-center justify-center hover:bg-red-100 transition-colors" title="Recusar"><Trash2 size={20}/></button>
-                                            
                                             <button onClick={() => handleOpenChat(prop)} className="bg-white border border-gray-300 text-gray-700 font-bold rounded-xl py-3 flex items-center justify-center relative hover:bg-gray-50 transition-colors">
                                                 <MessageCircle size={20}/>
                                                 {(prop.unread_count || 0) > 0 && <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs w-5 h-5 flex items-center justify-center rounded-full font-bold shadow-md animate-bounce">{prop.unread_count}</span>}
                                             </button>
-
                                             <button onClick={() => handleAcceptProposalFree(prop)} className="col-span-2 bg-gray-900 text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2 hover:bg-black shadow-lg transition-transform active:scale-[0.98]">
                                                 <CheckCircle size={18} /> Aceitar Proposta
                                             </button>
@@ -699,11 +787,7 @@ export default function ClientDashboard() {
                                     {prop.is_accepted && (
                                         <>
                                             <button onClick={() => handleOpenChat(prop)} className="bg-blue-600 text-white font-bold rounded-xl py-3.5 flex items-center justify-center gap-2 hover:bg-blue-700 shadow-md transition-colors"><MessageCircle size={20}/> Chat</button>
-                                            {prop.userHasReviewed ? (
-                                                <button disabled className="bg-gray-100 text-gray-400 font-bold py-3 rounded-xl flex items-center justify-center gap-2 cursor-not-allowed"><Star size={18}/> Avaliado</button>
-                                            ) : (
-                                                <button onClick={() => { setRatingTarget({name: prop.driver?.nome_razao || 'Prestador', id: prop.driver?.id || '', orderId: prop.order_id}); setShowRatingModal(true); }} className="bg-yellow-400 text-yellow-900 font-bold py-3.5 rounded-xl flex items-center justify-center gap-2 hover:bg-yellow-500 shadow-md transition-colors"><Star size={18}/> Avaliar</button>
-                                            )}
+                                            <button onClick={() => startUnlockProcess(prop)} className="bg-white border border-blue-200 text-blue-600 font-bold rounded-xl py-3.5 flex items-center justify-center gap-2 hover:bg-blue-50 transition-colors"><Lock size={16}/> Ver Contato</button>
                                         </>
                                     )}
                                 </div>
@@ -714,8 +798,8 @@ export default function ClientDashboard() {
             </div>
         </div>
       )}
-      
-      {/* MODAL 3: NOVO PEDIDO */}
+
+      {/* --- MODAL 3: NOVO PEDIDO (COM GEOLOCALIZAÇÃO) --- */}
       {showNewOrderModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-in fade-in backdrop-blur-sm">
               <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 relative animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
@@ -724,38 +808,75 @@ export default function ClientDashboard() {
                       <button onClick={() => setShowNewOrderModal(false)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors"><X size={20} className="text-gray-500"/></button>
                   </div>
                   <form onSubmit={handleSaveOrder} className="space-y-6">
+                      
+                      {/* TIPO DE CARGA */}
                       <div>
                           <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1 mb-2 block">Tipo de Carga</label>
                           <div className="grid grid-cols-4 gap-2">
                               {CARGO_TYPES.map(v => (
                                   <button key={v.id} type="button" onClick={() => setOrderForm({...orderForm, cargoType: v.id})} className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all ${orderForm.cargoType === v.id ? 'border-blue-500 bg-blue-50 text-blue-600 shadow-md' : 'border-gray-200 bg-white text-gray-400 hover:bg-gray-50'}`}>
-                                      {v.icon}
-                                      <span className="text-[10px] font-bold mt-2">{v.label}</span>
+                                      {v.icon} <span className="text-[10px] font-bold mt-2">{v.label}</span>
                                   </button>
                               ))}
                           </div>
                       </div>
-                      <div className="relative space-y-4">
-                          <div className="relative"><input placeholder="Local / Endereço" className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm font-medium focus:border-blue-500 outline-none text-gray-900 transition-all placeholder:text-gray-400" value={orderForm.origin} onChange={e => setOrderForm({...orderForm, origin: e.target.value})} required /></div>
+
+                      {/* --- LOCALIZAÇÃO INTELIGENTE (GPS + AUTOCOMPLETE) --- */}
+                      <div className="relative">
+                          <div className="flex justify-between items-center mb-1">
+                              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Localização</label>
+                              <button type="button" onClick={fillWithGPS} disabled={isGettingGPS} className="text-[10px] font-black text-blue-600 flex items-center gap-1 hover:underline active:scale-95 disabled:opacity-50">
+                                  {isGettingGPS ? <Loader2 className="animate-spin" size={10}/> : <Navigation size={10}/>} USAR GPS ATUAL
+                              </button>
+                          </div>
+                          
+                          <div className="relative">
+                            <input 
+                                placeholder="Digite a rua, bairro ou local..." 
+                                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm font-medium outline-none focus:border-blue-500 transition-all pr-10 text-gray-900" 
+                                value={orderForm.origin} 
+                                onChange={e => handleAddressSearch(e.target.value)} 
+                                required 
+                            />
+                            {isSearchingAddress && <Loader2 className="absolute right-4 top-4 animate-spin text-blue-500" size={18}/>}
+                          </div>
+                          
+                          {addressSuggestions.length > 0 && (
+                            <div className="absolute z-[100] w-full bg-white border border-gray-200 rounded-xl mt-1 shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2">
+                              {addressSuggestions.map((item, idx) => (
+                                <button 
+                                    key={idx} 
+                                    type="button" 
+                                    onClick={() => { setOrderForm({...orderForm, origin: item.display_name, lat: parseFloat(item.lat), lng: parseFloat(item.lon)}); setAddressSuggestions([]); }} 
+                                    className="w-full p-4 text-left text-xs hover:bg-blue-50 border-b border-gray-50 flex items-center gap-3 transition-colors text-gray-700"
+                                >
+                                  <MapPin size={16} className="text-blue-500 shrink-0"/><span className="truncate font-medium">{item.display_name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {orderForm.lat && <p className="text-[9px] text-green-600 font-bold mt-1 flex items-center gap-1 animate-pulse"><ShieldCheck size={10}/> Coordenadas confirmadas via satélite</p>}
                       </div>
+
+                      {/* OUTROS CAMPOS */}
                       <div>
                           <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Detalhes (Qtd, Peso, etc)</label>
                           <textarea placeholder="Ex: 50 sacos de cimento, 2º andar..." className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm font-medium focus:border-blue-500 outline-none text-gray-900 min-h-[100px] mt-1 resize-none placeholder:text-gray-400" value={orderForm.description} onChange={e => setOrderForm({...orderForm, description: e.target.value})} required />
                       </div>
                       
-                      <div>
-                          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Valor Sugerido (R$)</label>
-                          <div className="relative mt-1">
-                              <span className="absolute left-4 top-4 text-gray-400 font-bold">R$</span>
-                              <input type="number" step="0.01" placeholder="0,00 (Opcional)" className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 pl-12 text-sm font-bold focus:border-green-500 outline-none text-green-600 placeholder:text-gray-400" value={orderForm.price} onChange={e => setOrderForm({...orderForm, price: e.target.value})} />
-                          </div>
-                          <p className="text-[10px] text-gray-400 mt-2 ml-1">Deixe em branco se preferir negociar.</p>
-                      </div>
-
                       <div className="grid grid-cols-2 gap-4">
                           <div><label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Dia (Opcional)</label><input type="date" className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm font-bold text-gray-900 outline-none mt-1" value={orderForm.date} onChange={e => setOrderForm({...orderForm, date: e.target.value})} /></div>
                           <div><label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Hora (Opcional)</label><input type="time" className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm font-bold text-gray-900 outline-none mt-1" value={orderForm.time} onChange={e => setOrderForm({...orderForm, time: e.target.value})} /></div>
                       </div>
+                      
+                      <div>
+                          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Valor Sugerido (R$)</label>
+                          <div className="relative mt-1">
+                              <span className="absolute left-4 top-4 text-gray-400 font-bold text-sm">R$</span>
+                              <input type="number" step="0.01" placeholder="0,00 (Opcional)" className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 pl-12 text-sm font-bold focus:border-green-500 outline-none text-green-600 placeholder:text-gray-400" value={orderForm.price} onChange={e => setOrderForm({...orderForm, price: e.target.value})} />
+                          </div>
+                      </div>
+
                       <button type="submit" disabled={loading} className="w-full bg-gray-900 text-white font-bold py-4 rounded-xl hover:bg-black shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2">
                           {loading ? <Loader2 className="animate-spin"/> : isEditing ? 'Salvar Alterações' : 'Solicitar Agora'}
                       </button>
@@ -764,7 +885,7 @@ export default function ClientDashboard() {
           </div>
       )}
 
-      {/* MODAL 4: PAGAMENTO PIX */}
+      {/* --- MODAL 4: PAGAMENTO PIX --- */}
       {showPaymentModal && currentProposal && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm animate-in fade-in">
               <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 relative animate-in zoom-in-95">
@@ -787,64 +908,38 @@ export default function ClientDashboard() {
                       </>
                   )}
                   
-                  {paymentStep === 'generating' && (
-                      <div className="text-center py-16">
-                          <Loader2 size={64} className="animate-spin text-blue-500 mx-auto mb-6"/> 
-                          <h3 className="text-xl font-bold text-gray-900">Gerando QR Code...</h3>
-                      </div>
-                  )}
-                  
                   {paymentStep === 'waiting' && pixData && (
                       <div className="text-center">
                           <h3 className="text-xl font-bold mb-2 text-gray-900">Escaneie o QR Code</h3>
-                          <p className="text-sm text-gray-500 mb-6">Pague R$ {fee.toFixed(2)} no app do seu banco.</p>
-                          <div className="bg-white p-3 rounded-2xl inline-block mb-6 shadow-lg border border-gray-100">
-                              <img src={`data:image/png;base64,${pixData.qr_code_base64}`} alt="QR Code" className="w-52 h-52 mx-auto" />
-                          </div>
+                          <div className="bg-white p-3 rounded-2xl inline-block mb-6 shadow-lg border border-gray-100"><img src={`data:image/png;base64,${pixData.qr_code_base64}`} alt="QR Code" className="w-52 h-52 mx-auto" /></div>
                           <div className="flex gap-2 mb-6">
                               <input readOnly value={pixData.qr_code} className="w-full bg-gray-100 border border-gray-200 rounded-lg p-3 text-xs text-gray-500 font-mono"/>
                               <button onClick={() => { navigator.clipboard.writeText(pixData.qr_code); toast.success('Copiado!'); }} className="p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"><Copy size={18} /></button>
                           </div>
-                          <div className="flex items-center justify-center gap-2 text-xs text-gray-400 animate-pulse">
-                              <Loader2 className="animate-spin" size={14}/> Aguardando pagamento...
-                          </div>
+                          <div className="flex items-center justify-center gap-2 text-xs text-gray-400 animate-pulse"><Loader2 className="animate-spin" size={14}/> Aguardando pagamento...</div>
                       </div>
                   )}
                   
                   {paymentStep === 'success' && (
                       <div className="text-center py-4 animate-in zoom-in">
-                          <div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-6 border border-green-100">
-                              <CheckCircle size={56} className="text-green-600" />
-                          </div>
+                          <div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-6 border border-green-100"><CheckCircle size={56} className="text-green-600" /></div>
                           <h3 className="text-2xl font-bold text-gray-900 mb-2">Pagamento Confirmado!</h3>
-                          <p className="text-sm text-gray-500 mb-6">O contato foi liberado com sucesso.</p>
-                          
-                          <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-8">
-                             <p className="text-xs text-blue-600 uppercase font-bold mb-2">WhatsApp do Prestador</p>
-                             <p className="text-2xl font-mono font-bold text-gray-900 select-all">{currentProposal?.driver?.telefone}</p>
-                          </div>
-
-                          <a href={getWhatsAppLink(currentProposal?.driver?.telefone || '')} target="_blank" className="w-full bg-green-600 text-white font-bold py-4 rounded-xl flex justify-center gap-2 hover:bg-green-700 shadow-lg transition-colors">
-                              <MessageCircle/> Chamar no WhatsApp
-                          </a>
+                          <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-8"><p className="text-xs text-blue-600 uppercase font-bold mb-2">WhatsApp do Prestador</p><p className="text-2xl font-mono font-bold text-gray-900 select-all">{currentProposal?.driver?.telefone}</p></div>
+                          <a href={getWhatsAppLink(currentProposal?.driver?.telefone || '')} target="_blank" className="w-full bg-green-600 text-white font-bold py-4 rounded-xl flex justify-center gap-2 hover:bg-green-700 shadow-lg transition-colors"><MessageCircle/> Chamar no WhatsApp</a>
                       </div>
                   )}
               </div>
           </div>
       )}
 
-      {/* MODAL 5: AVALIAÇÃO */}
+      {/* --- MODAL 5: AVALIAÇÃO --- */}
       {showRatingModal && ratingTarget && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[60] backdrop-blur-sm animate-in fade-in">
               <div className="bg-white rounded-3xl p-8 w-full max-w-sm text-center shadow-2xl animate-in zoom-in-95">
                   <h3 className="font-bold text-xl text-gray-900">Avaliar Prestador</h3>
                   <p className="text-gray-500 text-sm mt-1">Como foi o serviço?</p>
                   <div className="flex justify-center gap-2 my-8">
-                      {[1,2,3,4,5].map(s => (
-                          <button key={s} onClick={() => setStars(s)} className={`transition-all duration-200 hover:scale-110 p-1 ${s <= stars ? 'text-yellow-400 drop-shadow-sm' : 'text-gray-200'}`}>
-                              <Star size={36} fill="currentColor" />
-                          </button>
-                      ))}
+                      {[1,2,3,4,5].map(s => (<button key={s} onClick={() => setStars(s)} className={`transition-all duration-200 hover:scale-110 p-1 ${s <= stars ? 'text-yellow-400 drop-shadow-sm' : 'text-gray-200'}`}><Star size={36} fill="currentColor" /></button>))}
                   </div>
                   <button onClick={submitReview} className="w-full bg-gray-900 text-white py-4 rounded-xl font-bold shadow-lg hover:bg-black transition-colors">Enviar Avaliação</button>
                   <button onClick={() => setShowRatingModal(false)} className="mt-4 text-gray-400 text-sm hover:text-gray-600 font-medium transition-colors">Cancelar</button>
@@ -852,7 +947,7 @@ export default function ClientDashboard() {
           </div>
       )}
 
-      {/* MODAL 6: CHAT */}
+      {/* --- MODAL 6: CHAT --- */}
       {showChatModal && currentProposal && currentUser && (
           <ChatModal 
             proposalId={currentProposal.id} 
