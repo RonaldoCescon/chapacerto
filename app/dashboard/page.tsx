@@ -846,6 +846,51 @@ const handleAcceptProposalFree = async (proposal: Proposal) => {
                 </div>
 
                 <div className="p-6">
+                    {/* --- ALERT LOGIC HERE --- */}
+                    {(() => {
+                        if (order.status !== 'open') return null;
+
+                        const now = new Date();
+                        const created = new Date(order.created_at);
+                        const scheduled = order.scheduled_date ? new Date(order.scheduled_date) : null;
+                        let showWarning = false;
+                        let msg = "";
+
+                        // Rule 1: Has scheduled date (Warn if date is today or passed)
+                        if (scheduled) {
+                            // Reset time to compare dates only
+                            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                            const sched = new Date(scheduled.getFullYear(), scheduled.getMonth(), scheduled.getDate());
+                            const diffTime = sched.getTime() - today.getTime();
+                            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+                            
+                            // If date has passed (negative) or is today (0)
+                            if (diffDays <= 0) {
+                                showWarning = true;
+                                msg = "Data limite atingida (Expira em breve)";
+                            }
+                        } 
+                        // Rule 2: No date (Warn if created more than 2 days ago)
+                        else {
+                            const diffTime = now.getTime() - created.getTime();
+                            const diffDays = diffTime / (1000 * 60 * 60 * 24);
+                            // Deletes after 3 days, so warn if passed 2 days
+                            if (diffDays > 2) {
+                                showWarning = true;
+                                msg = "Sem atividade há 2 dias (Expira em 24h)";
+                            }
+                        }
+
+                        if (showWarning) {
+                            return (
+                            <div className="bg-red-50 text-red-600 text-[10px] font-bold px-3 py-2 rounded-lg mb-4 flex items-center gap-2 border border-red-100 animate-pulse">
+                                <AlertTriangle size={14} /> ⚠️ {msg}. O pedido será removido automaticamente.
+                            </div>
+                            );
+                        }
+                    })()}
+                    {/* --- END ALERT LOGIC --- */}
+
                     <h3 className="text-xl font-bold text-gray-900 leading-tight mb-4">{order.clean_description}</h3>
                     
                     <div className="grid grid-cols-2 gap-4 mb-6">
@@ -879,8 +924,9 @@ const handleAcceptProposalFree = async (proposal: Proposal) => {
                                 onClick={async () => {
                                     // Busca rápida para saber quem avaliar
                                     const { data } = await supabase.from('proposals').select('driver_id, driver:profiles(nome_razao)').eq('order_id', order.id).eq('is_accepted', true).single();
+                                    
                                     if(data) {
-                                        // CORREÇÃO AQUI: Tratamos driver como 'any' para evitar erro de array vs objeto
+                                        // Tratamos driver como 'any' para evitar erro de array vs objeto
                                         const driverData: any = data.driver;
                                         const driverName = Array.isArray(driverData) ? driverData[0]?.nome_razao : driverData?.nome_razao;
                                         
@@ -920,8 +966,7 @@ const handleAcceptProposalFree = async (proposal: Proposal) => {
                     </div>
                 </div>
             </div>
-        ))}
-      </main>
+        ))}        </main>
 
       {/* --- MODAL 1: CANCELAMENTO --- */}
       {showCancelModal && (
