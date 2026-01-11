@@ -92,8 +92,8 @@ export default function RootLayout({
         <link rel="manifest" href="/manifest.json" />
         
         {/* --- AQUI ESTÁ A MUDANÇA PARA O SEU ÍCONE NOVO --- */}
-        <link rel="icon" href="/icon.png" type="image/png" />
-        <link rel="apple-touch-icon" href="/icon.png" />
+        <link rel="icon" href="/logo.png" type="image/png" />
+        <link rel="apple-touch-icon" href="/logo.png" />
         {/* ------------------------------------------------ */}
         
         <title>ChapaCerto</title>
